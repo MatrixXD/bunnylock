@@ -430,6 +430,24 @@ class MainViewModel(
 
     private suspend fun restartRadio() = helper.call("radio.cycle", 30_000)
 
+    /** Restarts only the selected SIM's radio so the other stays connected. Falls back to airplane mode. */
+    private suspend fun restartSimRadio() {
+        val result =
+            try {
+                helper.call("radio.cycleSim", 60_000) {
+                    put("sim", uiState.sim)
+                    put("subId", subId())
+                }
+            } catch (e: RootException) {
+                log("Couldn't restart only SIM ${uiState.sim}'s radio (${reason(e).asClause()}), so airplane mode was toggled instead.")
+                restartRadio()
+                return
+            }
+        if (result.optBoolean("airplaneMode")) {
+            log("SIM ${uiState.sim}'s radio didn't restart on its own, so airplane mode was toggled instead.")
+        }
+    }
+
     /**
      * [specs] is every lock bunnylock holds and is saved whole. A band lock is left out of the request while a cell lock
      * on its network stands in for it, so clearing the cell lock brings it back.
@@ -1181,7 +1199,7 @@ class MainViewModel(
                     } else {
                         mtkCellLock(MTK_ACT_NR, arfcn, nrPcis.firstOrNull())
                     }
-                    restartRadio()
+                    restartSimRadio()
                     if (lockLte &&
                         lockNr
                     ) {
@@ -1276,7 +1294,7 @@ class MainViewModel(
 
                 Backend.MEDIATEK -> {
                     callMediatek("mtk.cellUnlock")
-                    restartRadio()
+                    restartSimRadio()
                 }
 
                 else -> {
@@ -1429,7 +1447,7 @@ class MainViewModel(
 
     fun samsungMenu() =
         launchAction("open the Samsung band menu", "Opened the Samsung band menu.", refreshAfter = false) {
-            helper.call("samsung.menu")
+            helper.call("samsung.menu", 40_000)
             null
         }
 
@@ -1464,6 +1482,14 @@ class MainViewModel(
 
     fun clearOutput() = updateState { copy(toolOutput = "") }
 
+    /** The subscriptions the app sees. A lock for one Android doesn't have is refused outright. */
+    private fun simDiagnostics(): String {
+        val context = getApplication<Application>()
+        val phonePermission = context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+        val sims = uiState.sims.joinToString(", ") { "SIM ${it.slot + 1} (subscription ${it.subId})" }
+        return "SIMs: $sims. Selected: SIM ${uiState.sim}. Phone permission: ${if (phonePermission) "granted" else "denied"}."
+    }
+
     fun copyDiagnostics() {
         val device = uiState.device
         val text =
@@ -1476,6 +1502,7 @@ class MainViewModel(
                 appendLine("Baseband: ${device?.baseband}")
                 appendLine("RIL: ${device?.ril}")
                 appendLine("Access: ${uiState.access?.label}, backend: ${uiState.backend?.label}")
+                appendLine(simDiagnostics())
                 appendLine("Shizuku: ${ShizukuClient.describe(getApplication())}")
                 appendLine(
                     "QMI over QRTR: ${device?.qrtr}, HAL channel-lock API: ${if (device?.aospChannels == true) "present" else "absent"}, EN-DC control: ${device?.aospNrDc}",

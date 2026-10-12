@@ -41,23 +41,38 @@ object Aosp {
     private const val CHANNELS_CALLBACK_TIMEOUT_SECONDS = 8L
 
     private const val RADIO_OFF_PAUSE_MS = 2500L
+    private const val RADIO_STATE_POLL_MS = 500L
+    private const val RADIO_STATE_TIMEOUT_MS = 10_000L
 
-    /** The app may not know the subscription id (e.g. without READ_PHONE_STATE). ISub is then asked for the slot's id. */
+    /** The per-SIM "is the radio on" query. Its name depends on the Android version. */
+    private val SIM_RADIO_STATE_QUERIES = listOf("isRadioOnForSubscriber", "isRadioOnForSubscriberWithFeature")
+
+    /** Used when the app couldn't name a subscription: the one in [slot], else the default, else the only active one. Negative if none. */
     fun resolveSubId(
         subId: Int,
         slot: Int,
     ): Int {
         if (subId >= 0) return subId
-        return runCatching {
-            val isub = systemInterface("isub", "com.android.internal.telephony.ISub")
-            // ISub.getSubId(int slotIndex) returns an int or an int[], depending on the Android version.
-            val getSubId =
-                isub.javaClass.methods.first {
-                    it.name == "getSubId" && it.parameterTypes.contentEquals(arrayOf(Int::class.javaPrimitiveType))
+        val isub = runCatching { systemInterface("isub", "com.android.internal.telephony.ISub") }.getOrNull() ?: return subId
+
+        // ISub returns an int or an int[] depending on the method and Android version.
+        fun ids(
+            name: String,
+            vararg args: Any,
+        ): List<Int> =
+            runCatching {
+                val method = isub.javaClass.methods.first { it.name == name && it.parameterTypes.size == args.size }
+                when (val result = method.invoke(isub, *args)) {
+                    is Int -> listOf(result)
+                    is IntArray -> result.toList()
+                    else -> emptyList()
                 }
-            val id = getSubId.invoke(isub, slot)
-            (id as? Int) ?: (id as? IntArray)?.firstOrNull() ?: subId
-        }.getOrDefault(subId)
+            }.getOrDefault(emptyList()).filter { it >= 0 }
+
+        return ids("getSubId", slot).firstOrNull()
+            ?: ids("getDefaultSubId").firstOrNull()
+            ?: ids("getActiveSubIdList", true).singleOrNull()
+            ?: subId
     }
 
     /** The hidden AIDL client of a system service: `<aidlInterface>.Stub.asInterface(ServiceManager.getService(serviceName))`. */
@@ -310,6 +325,10 @@ object Aosp {
         subId: Int,
         specs: JSONArray,
     ): JSONObject {
+        check(subId >= 0) {
+            "Android has no active subscription for this SIM, so there is nothing to send the lock to. " +
+                "Check that the SIM is inserted and switched on, and that bunnylock has the Phone permission."
+        }
         val whole = List(specs.length()) { specs.getJSONObject(it) }.map(::toSpecifier)
         // Samsung's Snapdragon RIL refuses a specifier with more than MAX_RIL_BANDS bands, so a refused long list is sent again in pieces.
         val split = whole.flatMap(::splitToRilBands)
@@ -484,29 +503,51 @@ object Aosp {
             call("isRadioInterfaceCapabilitySupported", "CAPABILITY_NR_DUAL_CONNECTIVITY_CONFIGURATION_AVAILABLE") as Boolean
         }.getOrDefault(hasMethod("setNrDualConnectivityState", 2))
 
+    /**
+     * Restarts one SIM's radio and leaves the other connected. setRadioForSubscriber ignores a request for the state the
+     * radio already reports, so "on" waits until it shows off. If the radio gets stuck, airplane mode is toggled instead.
+     */
     fun cycleSubscriberRadio(subId: Int): JSONObject {
-        val api =
-            when {
-                subId >= 0 && hasMethod("setRadioPowerForSubscriber", 2) -> "setRadioPowerForSubscriber"
-                hasMethod("setRadioPower", 1) -> "setRadioPower"
-                subId >= 0 && hasMethod("setRadioForSubscriber", 2) -> "setRadioForSubscriber"
-                else -> throw IllegalStateException("This Android version can't restart the radio.")
-            }
+        if (subId < 0) return cycleDefaultRadio()
+        val stateQuery = SIM_RADIO_STATE_QUERIES.firstOrNull { hasMethod(it, 2) }
+        check(stateQuery !== null && hasMethod("setRadioForSubscriber", 2)) { "This Android version can't restart one SIM's radio." }
 
-        fun setPower(enabled: Boolean): Boolean =
-            if (api == "setRadioPower") {
-                call(api, enabled) == true
-            } else {
-                call(api, subId, enabled) == true
-            }
+        fun radioOn(): Boolean = call(stateQuery, subId, callingPackage) == true
 
+        fun awaitRadio(on: Boolean): Boolean {
+            val deadline = System.nanoTime() + RADIO_STATE_TIMEOUT_MS * 1_000_000
+            while (System.nanoTime() < deadline) {
+                if (radioOn() == on) return true
+                Thread.sleep(RADIO_STATE_POLL_MS)
+            }
+            return false
+        }
+
+        check(radioOn()) { "This SIM's radio is off." }
+        val restarted =
+            runCatching {
+                call("setRadioForSubscriber", subId, false)
+                if (!awaitRadio(on = false)) return@runCatching false
+                Thread.sleep(RADIO_OFF_PAUSE_MS)
+                (1..2).any {
+                    call("setRadioForSubscriber", subId, true)
+                    awaitRadio(on = true)
+                }
+            }.getOrDefault(false)
+        if (restarted) return JSONObject().put("method", "radio").put("api", "setRadioForSubscriber")
+        radioCycle()
+        return JSONObject().put("method", "radio").put("api", "airplane mode").put("airplaneMode", true)
+    }
+
+    /** For an unknown subscription. setRadioPower only reaches the default SIM. */
+    private fun cycleDefaultRadio(): JSONObject {
         // Switching on is attempted whatever switching off did. Only afterwards are the two results checked.
-        val off = runCatching { setPower(false) }
+        val off = runCatching { call("setRadioPower", false) == true }
         Thread.sleep(RADIO_OFF_PAUSE_MS)
-        val on = runCatching { setPower(true) }
+        val on = runCatching { call("setRadioPower", true) == true }
         check(on.getOrDefault(false)) { "The radio refused to turn back on: ${on.exceptionOrNull()?.message ?: "unknown error"}." }
         check(off.getOrDefault(false)) { "The radio refused to turn off: ${off.exceptionOrNull()?.message ?: "unknown error"}." }
-        return JSONObject().put("method", "radio").put("api", api)
+        return JSONObject().put("method", "radio").put("api", "setRadioPower")
     }
 
     fun radioCycle(): JSONObject {

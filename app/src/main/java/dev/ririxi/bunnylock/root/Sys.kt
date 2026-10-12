@@ -1,6 +1,7 @@
 package dev.ririxi.bunnylock.root
 
 import android.os.Build
+import android.system.Os
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -50,10 +51,11 @@ object Sys {
         knownAtNodes.distinct().filter { File(it).exists() }.forEach { atNodes.put(it) }
 
         val samsungMenu =
-            SAMSUNG_MENUS.any { component ->
-                val packageName = component.substringBefore('/')
-                sh("pm path $packageName").startsWith("package:")
-            }
+            Os.getuid() == 0 &&
+                SAMSUNG_MENUS.any { component ->
+                    val packageName = component.substringBefore('/')
+                    sh("pm path $packageName").startsWith("package:")
+                }
 
         return JSONObject()
             .put("vendor", vendor)
@@ -93,7 +95,7 @@ object Sys {
             else -> "unknown"
         }
 
-    /** One UI 6+ first, then the older standalone package. */
+    /** One UI 6+ first, then the older standalone package. Root only. */
     private val SAMSUNG_MENUS =
         listOf(
             "com.samsung.android.app.telephonyui/.hiddennetworksetting.MainActivity",
@@ -111,9 +113,7 @@ object Sys {
             failures += failureLine(output)
         }
         val denied = failures.firstOrNull { "Permission Denial" in it }
-        if (denied !==
-            null
-        ) {
+        if (denied !== null) {
             throw IllegalStateException("This phone only lets Samsung's own apps open its band menu, so it needs root ($denied).")
         }
         throw IllegalStateException(failures.joinToString(" / ").ifEmpty { "Couldn't find the Samsung band menu on this phone." })

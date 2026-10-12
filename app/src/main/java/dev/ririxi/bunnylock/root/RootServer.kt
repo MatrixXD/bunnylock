@@ -122,6 +122,11 @@ object RootServer {
 
             "radio.cycle" -> Aosp.radioCycle()
 
+            "radio.cycleSim" -> {
+                check(subId >= 0) { "This SIM's subscription isn't known." }
+                Aosp.cycleSubscriberRadio(subId)
+            }
+
             "qc.state" -> Qualcomm.state(sim)
 
             "qc.serving" -> Qualcomm.serving(sim)
