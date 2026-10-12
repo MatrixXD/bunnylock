@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.Bunnylock" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+    <color name="bg">#F9F9FF</color>
+    <color name="icon_bg">#101510</color>
+    <color name="icon_fg">#5BE584</color>
+</resources>
