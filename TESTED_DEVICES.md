@@ -35,7 +35,7 @@ Without root, bunnylock runs through Shizuku. Some MediaTek phones allow AT comm
 | Samsung Galaxy A57            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
 | Samsung Galaxy M11            |   12    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
 | Samsung Galaxy M23            |   15    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                                                                                                           |
-| Samsung Galaxy M23            |   15    | Shizuku | Android radio HAL |  ❌  |  ❌   | ❌  | ❌  | Modem ignores everything except RAT                                                                       |
+| Samsung Galaxy M23            |   15    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  | 2G/5G only doesn't work on SIM1                                                                           |
 | Samsung Galaxy M35            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
 | Samsung Galaxy S21 Ultra      |   15    | Shizuku | Android radio HAL |  ❌  |  ❌   | ✅  | ❌  | Modem ignores everything except RAT                                                                       |
 | Samsung Galaxy S23+           |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
@@ -45,7 +45,7 @@ Without root, bunnylock runs through Shizuku. Some MediaTek phones allow AT comm
 | Samsung Galaxy S25 Ultra      |   16    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                                                                                                           |
 | Samsung Galaxy S26 Ultra      |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
 | Samsung Galaxy Z Fold 8 Ultra |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
-| Redmi Note 12 4G              |   15    | Shizuku | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                                                                                                           |
+| Redmi Note 12 4G              |   15    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                                                                                                           |
 | Sony Xperia 1 V               |   15    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
 | Sony Xperia 1 VII             |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                                                                                                           |
 | Ulefone Note 6T               |   12    | Shizuku | MediaTek AT       |  ✅  |  ✅   | ✅  | ✅  |                                                                                                           |
