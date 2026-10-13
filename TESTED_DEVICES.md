@@ -24,5 +24,6 @@ These results were reported from real devices. Support may change with firmware,
 | Samsung Galaxy A52s           | Android 14      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
 | Sony Xperia 1 VII             | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
 | Samsung Galaxy A52            | Android 14      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
+| Samsung Galaxy M35            | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
 
 If you test another phone, include the model, Android version, access method, selected backend, and the features you actually tried.

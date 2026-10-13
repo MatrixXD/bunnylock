@@ -518,7 +518,8 @@ class MainViewModel(
             }
         }
         val keptNr = freedNr && keepsSavedBands()
-        return if (keptNr) "This phone's radio software may keep the old 5G bands, and bunnylock can only restore them with root." else null
+        if (!keptNr) return null
+        return "If the phone still sticks to the old 5G bands, lock 5G to the ones you need instead, $MAX_HAL_BANDS_PER_SPEC at most. That replaces the old lock."
     }
 
     private fun channelSpec(
@@ -978,6 +979,9 @@ class MainViewModel(
         bands: List<Int>,
         allBandsSelected: Boolean,
     ): String? {
+        // Old Qualcomm phones keep only part of a longer 5G list.
+        val nrListTooLong = group == Group.NR && !allBandsSelected && bands.size > MAX_HAL_BANDS_PER_SPEC && keepsSavedBands()
+        check(!nrListTooLong) { "This phone only takes $MAX_HAL_BANDS_PER_SPEC 5G bands in one lock, so pick $MAX_HAL_BANDS_PER_SPEC or fewer." }
         val override = mapOf(group to if (allBandsSelected) emptyList() else bands)
         if (allBandsSelected && group == Group.LTE) replaceSavedLteBands()
         val bandsOnlySpecs = bandSpecs(override)
