@@ -2,30 +2,50 @@
 
 These results were reported from real devices. Support may change with firmware, carrier configuration, or modem version.
 
-| Device                        | Android version | Access and backend  | Confirmed working                         |
-| ----------------------------- | --------------- | ------------------- | ----------------------------------------- |
-| Google Pixel 10               | Android 17      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Google Pixel 6 Pro            | Android 17      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| OnePlus Nord CE5              | Android 16      | MediaTek AT         | Band lock, ARFCN lock, RAT lock, PCI lock |
-| Samsung Galaxy Z Fold 8 Ultra | Android 17      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy M23            | Android 15      | Root + Qualcomm QMI | Band lock, ARFCN lock, RAT lock, PCI lock |
-| OnePlus Nord CE5              | Android 17      | MediaTek AT         | Band lock, ARFCN lock, RAT lock, PCI lock |
-| Samsung Galaxy A33            | Android 15      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy M11            | Android 12      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Oppo Find X9 Pro              | Android 16      | MediaTek AT         | Band lock, ARFCN lock, RAT lock, PCI lock |
-| Samsung Galaxy S26 Ultra      | Android 17      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Redmi Note 10                 | Android 14      | Root + MediaTek AT  | Band lock, ARFCN lock, RAT lock, PCI lock |
-| Samsung Galaxy S23+           | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy S23 Ultra      | Android 16      | Root + Qualcomm QMI | Band lock, ARFCN lock, RAT lock, PCI lock |
-| Samsung Galaxy S25 Ultra      | Android 16      | Root + Qualcomm QMI | Band lock, ARFCN lock, RAT lock, PCI lock |
-| Samsung Galaxy S25            | Android 17      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy S24            | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Sony Xperia 1V                | Android 15      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy A52s           | Android 14      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Sony Xperia 1 VII             | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy A52            | Android 14      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Samsung Galaxy M35            | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Realme 8 Pro                  | Android 13      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
-| Oppo A74 5G                   | Android 13      | Android radio HAL   | Band lock, RAT lock                       |
+## What each backend can do
 
-If you test another phone, include the model, Android version, access method, selected backend, and the features you actually tried.
+| Backend           | Needs root | Band | ARFCN | RAT | PCI |
+| ----------------- | :--------: | :--: | :---: | :-: | :-: |
+| Android radio HAL |     No     |  ✅  |  ✅   | ✅  | ❌  |
+| MediaTek AT       | Sometimes  |  ✅  |  ✅   | ✅  | ✅  |
+| Qualcomm QMI      |    Yes     |  ✅  |  ✅   | ✅  | ✅  |
+
+Without root, bunnylock runs through Shizuku. Some MediaTek phones allow AT commands that way, others need root.
+
+## Devices
+
+✅ works, ❌ doesn't work, - not tested.
+
+| Device                        | Android | Access  | Backend           | Band | ARFCN | RAT | PCI |
+| ----------------------------- | :-----: | ------- | ----------------- | :--: | :---: | :-: | :-: |
+| Google Pixel 6 Pro            |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Google Pixel 10               |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| OnePlus Nord CE5              |   16    | Shizuku | MediaTek AT       |  ✅  |  ✅   | ✅  | ✅  |
+| Oppo A74 5G                   |   13    | Shizuku | Android radio HAL |  ✅  |   -   | ✅  | ❌  |
+| Oppo Find X9 Pro              |   16    | Shizuku | MediaTek AT       |  ✅  |  ✅   | ✅  | ✅  |
+| Realme 8 Pro                  |   13    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Redmi Note 10                 |   14    | Root    | MediaTek AT       |  ✅  |  ✅   | ✅  | ✅  |
+| Samsung Galaxy A33            |   15    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy A52            |   14    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy A52s           |   14    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy M11            |   12    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy M23            |   15    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |
+| Samsung Galaxy M35            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy S23+           |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy S23 Ultra      |   16    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |
+| Samsung Galaxy S24            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy S25            |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy S25 Ultra      |   16    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |
+| Samsung Galaxy S26 Ultra      |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Samsung Galaxy Z Fold 8 Ultra |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Sony Xperia 1 V               |   15    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+| Sony Xperia 1 VII             |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |
+
+## Reporting a device
+
+If you test another phone, include:
+
+- the model and Android version
+- the access method (root or Shizuku)
+- the selected backend
+- the features you actually tried, and whether each one worked
