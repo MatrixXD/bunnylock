@@ -50,6 +50,15 @@ private data class ModemState(
 )
 
 private const val MAX_HAL_CHANNELS = 32
+
+// Old Qualcomm phones reject more than 8 bands per entry.
+private const val MAX_HAL_BANDS_PER_SPEC = 8
+
+// The highest LTE band Android 11 knows.
+private const val NEWEST_OLD_HAL_LTE_BAND = 88
+
+// LTE bands even old Qualcomm modems know.
+private val WIDELY_DEFINED_LTE_BANDS = (1..14) + (17..21) + (23..43) + listOf(46, 47, 48, 66, 71)
 private const val MAX_LOG_LINES = 80
 private const val MAX_TOOL_OUTPUT_CHARS = 8000
 
@@ -455,14 +464,61 @@ class MainViewModel(
     private suspend fun setChannels(specs: JSONArray) {
         val held = specs.objects()
         val cellLockRans = held.filter { it.isCellLock }.map { it.optInt("ran") }
-        val sent = JSONArray(held.filter { it.isCellLock || it.optInt("ran") !in cellLockRans })
+        sendChannels(JSONArray(held.filter { it.isCellLock || it.optInt("ran") !in cellLockRans }))
+        prefs.edit().putString(halSpecsKey(uiState.sim), specs.toString()).apply()
+    }
+
+    private suspend fun sendChannels(specs: JSONArray) {
         val result =
             helper.call("aosp.setChannels") {
                 put("subId", subId())
-                put("specs", sent)
+                put("specs", specs)
             }
         result.optString("diagnostic").takeIf { it.isNotBlank() }?.let { log("HAL channel lock: $it") }
-        prefs.edit().putString(halSpecsKey(uiState.sim), specs.toString()).apply()
+    }
+
+    /**
+     * Old Qualcomm phones read an unlock as "go back to the saved bands", and the saved bands are the lock.
+     * They are the phones that can't report their channels.
+     */
+    private suspend fun keepsSavedBands(): Boolean {
+        if (uiState.device?.vendor != "qualcomm") return false
+        val state = runCatching { helper.call("aosp.state") { put("subId", subId()) } }.getOrNull()
+        return state?.has("channels") != true
+    }
+
+    /** Sends every LTE band before an unlock to overwrite the saved lock. Skipped on phones bunnylock never locked. */
+    private suspend fun replaceSavedLteBands() {
+        if (!prefs.contains(halSpecsKey(uiState.sim)) || !keepsSavedBands()) return
+        val lte = uiState.groups.firstOrNull { it.group == Group.LTE }?.supported ?: return
+        // One unknown band makes the modem reject the whole list, so shorter lists are tried next.
+        val bandLists = listOf(lte, lte.filter { it <= NEWEST_OLD_HAL_LTE_BAND }, lte.filter { it in WIDELY_DEFINED_LTE_BANDS })
+        for (bands in bandLists.distinct()) {
+            val specs = bands.chunked(MAX_HAL_BANDS_PER_SPEC).map { channelSpec(Ran.EUTRAN, it, emptyList()) }
+            try {
+                sendChannels(JSONArray(specs))
+                return
+            } catch (e: RootException) {
+                log("Naming ${bands.size} LTE bands ahead of the unlock didn't work (${reason(e).asClause()}).")
+            }
+        }
+    }
+
+    /**
+     * An extra note for the user after an unlock, or null. MediaTek needs a radio restart for the unlock to apply.
+     * Old Qualcomm phones only take 8 NR bands per request, so 5G can't be fixed the way LTE is.
+     */
+    private suspend fun halUnlockNote(freedNr: Boolean): String? {
+        if (uiState.device?.vendor == "mediatek") {
+            return try {
+                restartSimRadio()
+                "The radio restarted to apply the change."
+            } catch (e: RootException) {
+                "The radio couldn't be restarted (${reason(e).asClause()}). Turn airplane mode on and off to apply the change."
+            }
+        }
+        val keptNr = freedNr && keepsSavedBands()
+        return if (keptNr) "This phone's radio software may keep the old 5G bands, and bunnylock can only restore them with root." else null
     }
 
     private fun channelSpec(
@@ -923,6 +979,7 @@ class MainViewModel(
         allBandsSelected: Boolean,
     ): String? {
         val override = mapOf(group to if (allBandsSelected) emptyList() else bands)
+        if (allBandsSelected && group == Group.LTE) replaceSavedLteBands()
         val bandsOnlySpecs = bandSpecs(override)
         val bandsOnlyResult = runCatching { setChannels(bandsOnlySpecs) }
         var note: String? = null
@@ -936,7 +993,7 @@ class MainViewModel(
         } else {
             bandsOnlyResult.getOrThrow()
         }
-        if (allBandsSelected) return null
+        if (allBandsSelected) return halUnlockNote(freedNr = group == Group.NR)?.let { "${group.label} bands unlocked. $it" }
         val cells = settledCells { strayBand(it, group, bands) }
         val registered = cells.filter { it.registered }
         // Some Shannon RILs read a bands-only lock as "no allowed channels", so the fall to 2G/3G is detected here.
@@ -1298,7 +1355,12 @@ class MainViewModel(
                 }
 
                 else -> {
-                    setChannels(JSONArray(savedChannelSpecs().filter { !it.isCellLock }))
+                    val (cellLocks, bandLocks) = savedChannelSpecs().partition { it.isCellLock }
+                    // A network with a band lock stays locked, so only the others are freed.
+                    val freedRans = cellLocks.map { it.optInt("ran") } - bandLocks.map { it.optInt("ran") }.toSet()
+                    if (Ran.EUTRAN in freedRans) replaceSavedLteBands()
+                    setChannels(JSONArray(bandLocks))
+                    halUnlockNote(freedNr = Ran.NGRAN in freedRans)?.let { return@launchAction "Cell lock cleared. $it" }
                 }
             }
             null
@@ -1400,7 +1462,10 @@ class MainViewModel(
                 }
 
                 Backend.ANDROID, null -> {
+                    val heldNrLock = savedChannelSpecs().any { it.optInt("ran") == Ran.NGRAN }
+                    replaceSavedLteBands()
                     setChannels(JSONArray())
+                    halUnlockNote(freedNr = heldNrLock)?.let { return@launchAction "Everything is unlocked. $it" }
                 }
             }
             null
