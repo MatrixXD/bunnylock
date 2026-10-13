@@ -553,7 +553,6 @@ object Qualcomm {
         } else {
             response.check(what)
         }
-        // Some modems take the lock but have no way to report it.
         val state = runCatching { lteLockState(client) }.getOrDefault(JSONObject())
         return state.put("airplaneMode", needsLteOff)
     }

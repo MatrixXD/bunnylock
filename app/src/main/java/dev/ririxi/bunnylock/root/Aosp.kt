@@ -209,7 +209,6 @@ object Aosp {
     }
 
     private fun supportedTypes(): Long? {
-        // A phone with 5G on one SIM at a time only reports it on that slot.
         val slotMasks = listOf(0, 1).mapNotNull { slot -> readMask("getRadioAccessFamily", slot, callingPackage) }
         return slotMasks.fold(0L) { mask, slotMask -> mask or slotMask }.takeIf { it > 0 }
     }

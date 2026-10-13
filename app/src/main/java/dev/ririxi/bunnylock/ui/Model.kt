@@ -3,6 +3,7 @@ package dev.ririxi.bunnylock.ui
 import android.telephony.TelephonyManager
 import dev.ririxi.bunnylock.core.Bands
 import dev.ririxi.bunnylock.data.Cell
+import dev.ririxi.bunnylock.data.Release
 import org.json.JSONObject
 
 enum class Backend(
@@ -306,9 +307,11 @@ data class UiState(
     val plmnMnc: String = "",
     val persist: Boolean = true,
     val dynamicColor: Boolean = true,
+    val checkUpdates: Boolean = true,
     val atNode: String = "",
     val toolOutput: String = "",
     val log: List<String> = emptyList(),
+    val update: Release? = null,
 ) {
     val anyBandLock get() = groups.any { it.locked }
 

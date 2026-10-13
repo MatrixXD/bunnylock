@@ -124,6 +124,21 @@ fun ToolsScreen(
         }
 
         item {
+            SectionHeader("Updates")
+            Segmented {
+                item {
+                    SwitchItem(
+                        it,
+                        "Check for updates",
+                        "Looks for a new release on GitHub when the app starts.",
+                        checked = state.checkUpdates,
+                        onCheckedChange = vm::setCheckUpdates,
+                    )
+                }
+            }
+        }
+
+        item {
             SectionHeader("Radio")
             Segmented {
                 item {

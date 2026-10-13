@@ -8,13 +8,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,9 +51,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.ririxi.bunnylock.data.Release
 
 enum class Tab(
     val label: String,
@@ -68,6 +75,8 @@ fun BunnyApp(vm: MainViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     LaunchedEffect(Unit) { vm.events.collect { snackbar.showSnackbar(it) } }
+
+    state.update?.let { UpdateDialog(it, onSkip = vm::skipUpdate, onDismiss = vm::dismissUpdate) }
 
     Scaffold(
         topBar = {
@@ -170,6 +179,42 @@ fun BunnyApp(vm: MainViewModel) {
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun UpdateDialog(
+    release: Release,
+    onSkip: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Update available") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Version ${release.version} is out.")
+                if (release.notes.isNotEmpty()) Text(release.notes, style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(
+                    onClick = {
+                        runCatching { uriHandler.openUri(release.url) }
+                        onDismiss()
+                    },
+                    shapes = ButtonDefaults.shapes(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Download") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = onSkip, shapes = ButtonDefaults.shapes()) { Text("Skip this version") }
+                    TextButton(onClick = onDismiss, shapes = ButtonDefaults.shapes()) { Text("Later") }
+                }
+            }
+        },
+    )
 }
 
 private fun topBarSubtitle(state: UiState): String {

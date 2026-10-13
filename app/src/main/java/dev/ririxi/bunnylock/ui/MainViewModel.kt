@@ -23,6 +23,7 @@ import dev.ririxi.bunnylock.data.Rat
 import dev.ririxi.bunnylock.data.RootClient
 import dev.ririxi.bunnylock.data.RootException
 import dev.ririxi.bunnylock.data.ShizukuClient
+import dev.ririxi.bunnylock.data.Updates
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -78,6 +79,7 @@ private const val QMI_NR_LOCK_GNB_LIST = 4
 
 // Long enough for the helper to go through airplane mode when the modem only changes the lock with LTE off.
 private const val QC_LTE_LOCK_TIMEOUT_MS = 60_000L
+private const val QC_REPORTED_EARFCN_BITS = 0xFFFFL
 private const val QC_LTE_OFF_NOTE = "This modem only changes the LTE cell lock with the radio off, so airplane mode came on for a moment."
 
 // The access technology numbers MediaTek's cell lock command takes and reports.
@@ -117,6 +119,7 @@ class MainViewModel(
             UiState(
                 persist = prefs.getBoolean("persist", true),
                 dynamicColor = prefs.getBoolean("dynamicColor", true),
+                checkUpdates = prefs.getBoolean("checkUpdates", true),
                 atNode = prefs.getString("atNode", "") ?: "",
             ),
         )
@@ -136,6 +139,33 @@ class MainViewModel(
 
     init {
         connect()
+        checkForUpdate()
+    }
+
+    private fun checkForUpdate() =
+        viewModelScope.launch {
+            if (!uiState.checkUpdates) return@launch
+            val app = getApplication<Application>()
+            val installed = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: return@launch
+            try {
+                val release = Updates.newerThan(installed)?.takeIf { it.version != prefs.getString("skippedUpdate", null) }
+                if (uiState.checkUpdates) updateState { copy(update = release) }
+            } catch (e: Exception) {
+                log("Couldn't check for updates. ${reason(e)}")
+            }
+        }
+
+    fun dismissUpdate() = updateState { copy(update = null) }
+
+    fun skipUpdate() {
+        uiState.update?.let { prefs.edit().putString("skippedUpdate", it.version).apply() }
+        dismissUpdate()
+    }
+
+    fun setCheckUpdates(enabled: Boolean) {
+        prefs.edit().putBoolean("checkUpdates", enabled).apply()
+        updateState { copy(checkUpdates = enabled) }
+        if (enabled) checkForUpdate() else dismissUpdate()
     }
 
     override fun onCleared() {
@@ -322,7 +352,7 @@ class MainViewModel(
         uiState.sims.firstOrNull { it.slot == uiState.sim - 1 }?.subId ?: SubscriptionManager.getDefaultSubscriptionId()
 
     fun setSim(sim: Int) {
-        val atNode =if (uiState.atNode.startsWith(RIL_NODE_PREFIX)) rilNode(sim) else uiState.atNode
+        val atNode = if (uiState.atNode.startsWith(RIL_NODE_PREFIX)) rilNode(sim) else uiState.atNode
         updateState { copy(sim = sim, atNode = atNode) }
         refresh()
     }
@@ -561,10 +591,8 @@ class MainViewModel(
 
     private fun has5g(aospState: JSONObject?): Boolean {
         val supported = aospState?.optLong("supportedTypes") ?: 0L
-        val reports4g = supported and Masks.G4 != 0L
-        val reports5g = supported and Masks.G5 != 0L
-        // A list without 4G is no real answer, so that phone keeps its 5G bands.
-        return reports5g || !reports4g
+        val unknown = supported and Masks.G4 == 0L
+        return unknown || supported and Masks.G5 != 0L
     }
 
     fun refresh() =
@@ -620,7 +648,7 @@ class MainViewModel(
                     cells = cells,
                     allowedMask = aospState?.takeIf { it.has("allowed") }?.optLong("allowed"),
                     supportedTypes = aospState?.takeIf { it.has("supportedTypes") }?.optLong("supportedTypes"),
-                    nrDc =aospState?.takeIf { it.has("nrDc") }?.optBoolean("nrDc"),
+                    nrDc = aospState?.takeIf { it.has("nrDc") }?.optBoolean("nrDc"),
                 )
             }
             updateNotification()
@@ -676,7 +704,6 @@ class MainViewModel(
         val hardwareNr = hardware.intList("nr")
         val groups = mutableListOf(bandGroupState(Group.LTE, hardware.intList("lte"), qcState.intList("lte")))
         when {
-            // A 4G modem can still answer with 5G band settings. It just lists no 5G bands of its own.
             hardwareNr.isNullOrEmpty() && !has5g(aospState) -> {}
 
             qcState.has("nrSa") || qcState.has("nrNsa") -> {
@@ -711,7 +738,6 @@ class MainViewModel(
             else -> null
         }
 
-    /** Some modems can't report their LTE cell lock, and the report cuts the EARFCN to 16 bits. The lock this app set fills that in. */
     private fun qcLteLock(
         reported: JSONObject?,
         sim: Int,
@@ -734,7 +760,7 @@ class MainViewModel(
     ): String {
         val cellsByEarfcn = lock.getJSONArray("cells").objects().groupBy { it.optLong("earfcn") }
         return cellsByEarfcn.entries.joinToString("; ") { (reported, cells) ->
-            val earfcn = setEarfcn?.takeIf { it and 0xFFFFL == reported } ?: reported
+            val earfcn = setEarfcn?.takeIf { it and QC_REPORTED_EARFCN_BITS == reported } ?: reported
             "EARFCN $earfcn, PCI ${orList(cells.map { it.optInt("pci").toString() })}"
         }
     }
@@ -869,7 +895,6 @@ class MainViewModel(
         val specs = channelSpecs(aospState, sim)
         val nrBands = channelBands(specs, Ran.NGRAN)
         val groups = mutableListOf(bandGroupState(Group.LTE, supportedBands = null, currentBands = channelBands(specs, Ran.EUTRAN)))
-        // A 5G band lock that is already set stays in view, so it can still be cleared.
         if (has5g(aospState) || nrBands !== null) groups += bandGroupState(Group.NR, supportedBands = null, currentBands = nrBands)
         return ModemState(
             nrMode = loadSamsungNrMode(sim),
