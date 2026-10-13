@@ -185,7 +185,6 @@ object Qualcomm {
 
     private fun QmiResponse.legacyBandMask(tlvId: Int): Long? = tlv(tlvId)?.takeIf { it.size >= 8 }?.let { Reader(it).u64() }
 
-    /** A u16 count followed by that many u16 values. */
     private fun u16List(value: ByteArray): List<Int> {
         val reader = Reader(value)
         return List(reader.u16()) { reader.u16() }
@@ -466,7 +465,6 @@ object Qualcomm {
         return JSONObject().put("nrMode", mode)
     }
 
-    /** Mode (u8), MCC (u16), MNC (u16). */
     private fun networkSelection(
         mode: Int,
         mcc: Int,

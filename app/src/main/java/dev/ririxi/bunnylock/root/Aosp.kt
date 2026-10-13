@@ -365,7 +365,6 @@ object Aosp {
     private fun toSpecifier(spec: JSONObject): RadioAccessSpecifier =
         RadioAccessSpecifier(spec.getInt("ran"), spec.optJSONArray("bands").toIntArray(), spec.optJSONArray("channels").toIntArray())
 
-    /** Groups of at most MAX_RIL_BANDS bands. A specifier that names channels is left whole. */
     private fun splitToRilBands(spec: RadioAccessSpecifier): List<RadioAccessSpecifier> {
         if (spec.bands.size <= MAX_RIL_BANDS || spec.channels.isNotEmpty()) return listOf(spec)
         return spec.bands

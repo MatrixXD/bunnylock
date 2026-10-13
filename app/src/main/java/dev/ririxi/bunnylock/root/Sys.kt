@@ -119,7 +119,6 @@ object Sys {
         throw IllegalStateException(failures.joinToString(" / ").ifEmpty { "Couldn't find the Samsung band menu on this phone." })
     }
 
-    /** The line of `am start` output that says why it failed, or else its last line. */
     private fun failureLine(amStartOutput: String): String {
         val lines = amStartOutput.lines().map { it.trim() }
         return lines.firstOrNull { "Permission Denial" in it || it.startsWith("Error:") } ?: lines.lastOrNull { it.isNotEmpty() }.orEmpty()

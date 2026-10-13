@@ -4,10 +4,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import dev.ririxi.bunnylock.root.RootServer
 import dev.ririxi.bunnylock.root.ShizukuService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -16,17 +20,21 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import moe.shizuku.server.IRemoteProcess
+import moe.shizuku.server.IShizukuService
 import org.json.JSONObject
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuProvider
 import rikka.sui.Sui
+import java.io.InputStream
+import java.io.OutputStream
 import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * Runs the same request handler as the su helper inside a Shizuku UserService.
- * [onLost] reports a service that died after it connected.
+ * Runs the helper through Shizuku: as a UserService, or in a Shizuku shell where the service won't start (RikkaApps/Shizuku#1171).
+ * [onLost] reports a helper that died after it connected.
  */
 class ShizukuClient(
     private val context: Context,
@@ -34,24 +42,74 @@ class ShizukuClient(
 ) : PrivilegedClient {
     private var service: ShizukuService.Proxy? = null
     private var connection: ServiceConnection? = null
+    private var boundArgs: Shizuku.UserServiceArgs? = null
+    private var shell: ShellHelper? = null
 
-    private val args =
+    private val prefs = context.getSharedPreferences("bunnylock", Context.MODE_PRIVATE)
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun serviceArgs() =
         Shizuku
             .UserServiceArgs(ComponentName(context.packageName, ShizukuService::class.java.name))
             // Not a daemon: Shizuku stops the helper once the app's process is gone.
             .daemon(false)
             .processNameSuffix("bunnylockd")
+            // A fresh tag per bind, so an earlier helper's death can't drop this connection.
+            .tag("bunnylockd-${++lastBind}")
             // Shizuku keeps a helper that is already running while this number matches, so the install time stands in: every update gets a fresh one.
             .version((context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime / 1000).toInt())
 
-    override val running: Boolean get() = service?.alive == true
+    val inShell: Boolean get() = shell !== null
+
+    override val running: Boolean get() = shell?.running ?: (service?.alive == true)
 
     override suspend fun start(): JSONObject {
         if (Shizuku.isPreV11()) throw RootException("This Shizuku version is too old. Update Shizuku and try again.")
         if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) requestPermission()
+        val shellFirst = prefs.getBoolean(PREF_SHELL_FIRST, false)
+        return try {
+            if (shellFirst) startInShell() else startAsService()
+        } catch (first: Exception) {
+            if (first is CancellationException) throw first
+            stop()
+            val hello =
+                try {
+                    if (shellFirst) startAsService() else startInShell()
+                } catch (second: Exception) {
+                    if (second is CancellationException) throw second
+                    throw RootException("${first.message} ${second.message}")
+                }
+            prefs.edit().putBoolean(PREF_SHELL_FIRST, !shellFirst).apply()
+            hello
+        }
+    }
+
+    private suspend fun startAsService(): JSONObject {
         service = bind()
         // The su helper is given this directory on its command line and says hello unasked. This one has to be asked.
         return call("hello") { put("libDir", context.applicationInfo.nativeLibraryDir) }
+    }
+
+    private suspend fun startInShell(): JSONObject {
+        val helper = ShellHelper()
+        val hello = helper.start()
+        shell = helper
+        return hello
+    }
+
+    private inner class ShellHelper : HelperClient(context, "Shizuku helper") {
+        override fun openShell(): Process {
+            val server = IShizukuService.Stub.asInterface(Shizuku.getBinder()) ?: throw RootException("Shizuku stopped.")
+            return try {
+                RemoteShell(server.newProcess(arrayOf("/system/bin/sh"), null, null))
+            } catch (e: Exception) {
+                throw RootException("Shizuku couldn't open a shell (${e.message}).")
+            }
+        }
+
+        override fun exited() {
+            mainHandler.post { if (shell === this) onLost() }
+        }
     }
 
     private suspend fun requestPermission() {
@@ -118,7 +176,9 @@ class ShizukuClient(
                                     onLost()
                                 }
                             }
+                        val args = serviceArgs()
                         connection = newConnection
+                        boundArgs = args
                         Shizuku.bindUserService(args, newConnection)
                     }
                 }
@@ -132,6 +192,7 @@ class ShizukuClient(
         timeoutMs: Long,
         build: JSONObject.() -> Unit,
     ): JSONObject {
+        shell?.let { return it.call(cmd, timeoutMs, build) }
         val proxy = service ?: throw RootException("The Shizuku service isn't running.")
         val request = JSONObject().put("cmd", cmd).apply(build)
         // A binder call can't be interrupted, so one that hangs is left behind on its own thread.
@@ -152,26 +213,32 @@ class ShizukuClient(
     }
 
     override fun stop() {
+        val shellHelper = shell
         val bound = connection
-        // Cleared before unbinding, so that the disconnect this causes counts as stale and isn't reported as a lost helper.
+        val args = boundArgs
+        // Cleared first, so the exit or disconnect this causes isn't reported as a lost helper.
+        shell = null
         connection = null
+        boundArgs = null
         service = null
+        shellHelper?.stop()
         // The last argument also removes the service, which ends the helper process.
-        if (bound !== null) runCatching { Shizuku.unbindUserService(args, bound, true) }
+        if (bound !== null && args !== null) runCatching { Shizuku.unbindUserService(args, bound, true) }
     }
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 7031
+        private const val PREF_SHELL_FIRST = "shizukuShell"
+
+        private var lastBind = 0
 
         private fun binderAlive(): Boolean = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
 
-        /** The Shizuku app's version, or null when it isn't installed. */
         fun installedVersion(context: Context): String? =
             runCatching {
                 context.packageManager.getPackageInfo(ShizukuProvider.MANAGER_APPLICATION_ID, 0).versionName ?: "of unknown version"
             }.getOrNull()
 
-        /** Shizuku is running and has already let bunnylock in. */
         fun granted(): Boolean =
             runCatching { Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
 
@@ -210,5 +277,31 @@ class ShizukuClient(
                 }
             } ?: false
         }
+    }
+}
+
+private class RemoteShell(
+    private val remote: IRemoteProcess,
+) : Process() {
+    private val stdin = ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream)
+    private val stdout = ParcelFileDescriptor.AutoCloseInputStream(remote.inputStream)
+    private val stderr = ParcelFileDescriptor.AutoCloseInputStream(remote.errorStream)
+
+    override fun getOutputStream(): OutputStream = stdin
+
+    override fun getInputStream(): InputStream = stdout
+
+    override fun getErrorStream(): InputStream = stderr
+
+    override fun waitFor(): Int = remote.waitFor()
+
+    override fun exitValue(): Int = remote.exitValue()
+
+    // The default relies on an exception from exitValue() that doesn't cross the binder call.
+    override fun isAlive(): Boolean = runCatching { remote.alive() }.getOrDefault(false)
+
+    override fun destroy() {
+        runCatching { remote.destroy() }
+        listOf(stdin, stdout, stderr).forEach { runCatching { it.close() } }
     }
 }

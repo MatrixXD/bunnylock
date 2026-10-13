@@ -112,7 +112,6 @@ object OemHook {
 
     private fun commandText(request: ByteArray): String = String(request, Charsets.US_ASCII)
 
-    /** Copies as much of the reply as fits into the caller's buffer and returns that length. */
     private fun writeReply(
         reply: String,
         response: ByteArray,
@@ -277,7 +276,6 @@ object OemHook {
 
     fun available(): Boolean = workingTarget !== null
 
-    /** Which path works, or why none does. */
     fun status(): String {
         val working = workingTarget
         return if (working !== null) "Working through ${working.label}." else probe.exceptionOrNull()?.message.orEmpty()

@@ -26,8 +26,10 @@ Without root, bunnylock runs through Shizuku. Some MediaTek phones allow AT comm
 | Realme 8 Pro                  |   13    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Redmi Note 10                 |   14    | Root    | MediaTek AT       |  ✅  |  ✅   | ✅  | ✅  | Custom ROM               |
 | Samsung Galaxy A33            |   15    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
+| Samsung Galaxy A37            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy A52            |   14    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy A52s           |   14    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
+| Samsung Galaxy A57            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy M11            |   12    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy M23            |   15    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                          |
 | Samsung Galaxy M35            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
@@ -41,6 +43,8 @@ Without root, bunnylock runs through Shizuku. Some MediaTek phones allow AT comm
 | Samsung Galaxy Z Fold 8 Ultra |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Sony Xperia 1 V               |   15    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Sony Xperia 1 VII             |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
+| Ulefone Note 6T               |   12    | Shizuku | MediaTek AT       |  ✅  |  ✅   | ✅  | ✅  |                          |
+| Xiaomi 14T                    |   16    | Shizuku | Android radio HAL |  ❌  |  ❌   | ✅  | ❌  | Modem ignores everything |
 
 ## Reporting a device
 

@@ -35,7 +35,6 @@ private const val TLV_HEADER_SIZE = 3
 // Every response carries this TLV: result (u16, 0 on success) and error code (u16).
 private const val TLV_RESULT = 0x02
 
-/** Builds a message body, one TLV at a time. */
 class Tlvs {
     private val out = ByteArrayOutputStream()
 

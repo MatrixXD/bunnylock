@@ -38,7 +38,6 @@ class ShizukuService : Binder() {
             }
         }
 
-    /** Client side of [ShizukuService]. */
     class Proxy(
         private val remote: IBinder,
     ) {

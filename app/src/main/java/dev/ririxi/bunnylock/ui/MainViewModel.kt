@@ -200,6 +200,7 @@ class MainViewModel(
                     else -> "Connected through Shizuku with ADB access, so only the Android radio HAL features are available."
                 }
             log("$accessSummary Using ${uiState.backend?.label} (chipset: ${device.vendorLabel}).")
+            if ((helper as? ShizukuClient)?.inShell == true) log("Shizuku's service for bunnylock doesn't start on this phone, so the helper runs in a Shizuku shell.")
             loadSims()
             refreshNow()
             if (pendingUnlock) {

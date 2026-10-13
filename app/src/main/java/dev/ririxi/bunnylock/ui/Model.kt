@@ -150,7 +150,6 @@ data class CellForm(
     /** The user chose [nrScs] by hand, so typing a channel no longer replaces it with the band's usual spacing. */
     val nrScsPicked: Boolean = false,
 ) {
-    /** The NR bands the entered ARFCN could belong to. */
     val nrCandidates: List<Int> get() = nrArfcn.toIntOrNull()?.let { Bands.nrBandsOf(it) } ?: emptyList()
 }
 

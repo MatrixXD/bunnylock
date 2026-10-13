@@ -12,7 +12,6 @@ import android.os.Build
 import dev.ririxi.bunnylock.MainActivity
 import dev.ririxi.bunnylock.R
 
-/** Ongoing notification listing active locks, with a timer and an "Unlock all" action. */
 object LockNotifier {
     const val ACTION_UNLOCK_ALL = "dev.ririxi.bunnylock.action.UNLOCK_ALL"
     private const val CHANNEL_ID = "locks"
