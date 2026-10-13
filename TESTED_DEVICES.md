@@ -25,5 +25,7 @@ These results were reported from real devices. Support may change with firmware,
 | Sony Xperia 1 VII             | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
 | Samsung Galaxy A52            | Android 14      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
 | Samsung Galaxy M35            | Android 16      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
+| Realme 8 Pro                  | Android 13      | Android radio HAL   | Band lock, ARFCN lock, RAT lock           |
+| Oppo A74 5G                   | Android 13      | Android radio HAL   | Band lock, RAT lock                       |
 
 If you test another phone, include the model, Android version, access method, selected backend, and the features you actually tried.
