@@ -50,10 +50,9 @@ abstract class HelperClient(
             }
             // exec replaces the shell with the helper, so the shell's pipes become the helper's.
             helperStdin.write("export CLASSPATH='${appInfo.sourceDir}'\n")
-            helperStdin
-                .write(
-                    "exec /system/bin/app_process /system/bin --nice-name=bunnylockd dev.ririxi.bunnylock.root.RootServer '${appInfo.nativeLibraryDir}'\n",
-                )
+            helperStdin.write(
+                "exec /system/bin/app_process /system/bin --nice-name=bunnylockd dev.ririxi.bunnylock.root.RootServer '${appInfo.nativeLibraryDir}'\n",
+            )
             helperStdin.flush()
 
             val ready = CompletableDeferred<JSONObject>()

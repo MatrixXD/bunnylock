@@ -55,8 +55,7 @@ class OemCallback(
                 // Reads past the interface token. A descriptor that doesn't match is no reason to drop the reply.
                 runCatching { data.enforceInterface(descriptor) }
                 val method = methodsByCode[code]
-                val text = if (method === null) "" else readText(method.parameterTypes, data)
-                this@OemCallback.reply = text
+                this@OemCallback.reply = if (method === null) "" else readText(method.parameterTypes, data)
                 reply?.writeNoException()
                 latch.countDown()
                 return true

@@ -66,6 +66,14 @@ object Qualcomm {
     private const val TLV_LTE_LOCK_GET_CELLS = 0x10
     private const val TLV_LTE_LOCK_SET_CELLS = 0x01
 
+    // Asks the modem to apply the lock without a restart.
+    private const val TLV_LTE_LOCK_SET_ENFORCE = 0x10
+
+    // The modem's answer when LTE is active and it only changes the cell lock with LTE off.
+    private const val ERR_INCOMPATIBLE_STATE = 0x5A
+    private const val LTE_OFF_ATTEMPTS = 4
+    private const val LTE_OFF_RETRY_MS = 1000L
+
     // NAS_NR_LOCK_GET and NAS_NR_LOCK_SET
     private const val TLV_NR_LOCK_GET_TYPE = 0x10
     private const val TLV_NR_LOCK_GET_PCI_CELL = 0x11
@@ -275,9 +283,8 @@ object Qualcomm {
         val cells = JSONArray()
         response.tlv(TLV_LTE_LOCK_GET_CELLS)?.let { value ->
             val reader = Reader(value)
-            val count = reader.u8()
             // EARFCN reads back as 16 bits on this message even though SET takes 32.
-            repeat(count) {
+            repeat(reader.u8()) {
                 if (reader.remaining >= 4) cells.put(JSONObject().put("pci", reader.u16()).put("earfcn", reader.u16()))
             }
         }
@@ -286,9 +293,8 @@ object Qualcomm {
 
     private fun nrLockState(client: QmiClient): JSONObject {
         val response = client.send(NAS_NR_LOCK_GET).check("the NR cell lock query")
-        val lock = JSONObject()
         val type = response.tlv(TLV_NR_LOCK_GET_TYPE)?.takeIf { it.size >= 4 }?.let { Reader(it).i32() } ?: NR_LOCK_TYPE_NONE
-        lock.put("type", type).put("active", type != NR_LOCK_TYPE_NONE)
+        val lock = JSONObject().put("type", type).put("active", type != NR_LOCK_TYPE_NONE)
         response.tlv(TLV_NR_LOCK_GET_PCI_CELL)?.takeIf { it.size >= NR_LOCKED_CELL_BYTES }?.let {
             val reader = Reader(it)
             val pci = reader.u16()
@@ -395,8 +401,8 @@ object Qualcomm {
     ) {
         val isSa = kind == "nrSa"
         val mask = Bands.toMask(bands, NR_MASK_BYTES)
-        val modeTlv = if (isSa) TLV_SSP_NR_SA_BANDS_SET else TLV_SSP_NR_NSA_BANDS_SET
-        if (client.send(NAS_SET_SSP, sspRequest(persist).add(modeTlv, mask)).ok) return
+        val bandsTlv = if (isSa) TLV_SSP_NR_SA_BANDS_SET else TLV_SSP_NR_NSA_BANDS_SET
+        if (client.send(NAS_SET_SSP, sspRequest(persist).add(bandsTlv, mask)).ok) return
         // Older firmware only knows the combined NR mask.
         client.send(NAS_SET_SSP, sspRequest(persist).add(TLV_SSP_NR_COMBINED, mask)).check("the NR band lock")
         val modeName = if (isSa) "SA" else "NSA"
@@ -515,18 +521,42 @@ object Qualcomm {
             cells.write(LittleEndian.u16(pci))
             cells.write(LittleEndian.u32(earfcn))
         }
-        return nas(sim) { client ->
-            client.send(NAS_LTE_LOCK_SET, Tlvs().add(TLV_LTE_LOCK_SET_CELLS, cells.toByteArray()).u8(0x10, 1)).check("the LTE cell lock")
-            lteLockState(client)
-        }
+        return nas(sim) { client -> setLteCells(client, cells.toByteArray(), "the LTE cell lock") }
     }
 
-    fun lteUnlock(sim: Int): JSONObject =
-        nas(sim) { client ->
-            // An empty cell list (a count of zero) clears the lock.
-            client.send(NAS_LTE_LOCK_SET, Tlvs().u8(TLV_LTE_LOCK_SET_CELLS, 0).u8(0x10, 1)).check("the LTE cell unlock")
-            lteLockState(client)
+    // An empty cell list (a count of zero) clears the lock.
+    fun lteUnlock(sim: Int): JSONObject = nas(sim) { client -> setLteCells(client, byteArrayOf(0), "the LTE cell unlock") }
+
+    /**
+     * Some modems only change the LTE cell lock while LTE is off, so a refusal for that reason is sent again in
+     * airplane mode. The result says whether that was needed.
+     */
+    private fun setLteCells(
+        client: QmiClient,
+        cells: ByteArray,
+        what: String,
+    ): JSONObject {
+        fun send() = client.send(NAS_LTE_LOCK_SET, Tlvs().add(TLV_LTE_LOCK_SET_CELLS, cells).u8(TLV_LTE_LOCK_SET_ENFORCE, 1))
+        val response = send()
+        val needsLteOff = response.error == ERR_INCOMPATIBLE_STATE
+        if (needsLteOff) {
+            Aosp.inAirplaneMode {
+                // The radio takes a moment to go quiet after airplane mode comes on.
+                var retry = send()
+                for (attempt in 2..LTE_OFF_ATTEMPTS) {
+                    if (retry.error != ERR_INCOMPATIBLE_STATE) break
+                    Thread.sleep(LTE_OFF_RETRY_MS)
+                    retry = send()
+                }
+                retry.check(what)
+            }
+        } else {
+            response.check(what)
         }
+        // Some modems take the lock but have no way to report it.
+        val state = runCatching { lteLockState(client) }.getOrDefault(JSONObject())
+        return state.put("airplaneMode", needsLteOff)
+    }
 
     /**
      * type: "pci", "arfcn" (frequency only), "multi" (several PCIs on one ARFCN), "gnb" (allow-list).

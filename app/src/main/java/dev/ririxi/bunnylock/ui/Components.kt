@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.DefaultFillType
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
 import androidx.compose.ui.graphics.vector.path
@@ -312,8 +313,12 @@ private class RatBadgeStyle(
 object BunnyIcons {
     private fun icon(
         name: String,
+        fillType: PathFillType = DefaultFillType,
         block: PathBuilder.() -> Unit,
-    ) = ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).path(fill = SolidColor(Color.Black), pathBuilder = block).build()
+    ) = ImageVector
+        .Builder(name, 24.dp, 24.dp, 24f, 24f)
+        .path(fill = SolidColor(Color.Black), pathFillType = fillType, pathBuilder = block)
+        .build()
 
     val Lock: ImageVector by lazy {
         icon("Lock") {
@@ -384,30 +389,28 @@ object BunnyIcons {
     }
 
     val Bunny: ImageVector by lazy {
-        ImageVector
-            .Builder("Bunny", 24.dp, 24.dp, 24f, 24f)
-            .path(fill = SolidColor(Color.Black), pathFillType = PathFillType.EvenOdd) {
-                moveTo(7f, 5.5f)
-                arcToRelative(2f, 4f, 0f, true, true, 4f, 0f)
-                arcToRelative(2f, 4f, 0f, true, true, -4f, 0f)
-                close()
-                moveTo(13f, 5.5f)
-                arcToRelative(2f, 4f, 0f, true, true, 4f, 0f)
-                arcToRelative(2f, 4f, 0f, true, true, -4f, 0f)
-                close()
-                moveTo(6f, 15.5f)
-                arcToRelative(6f, 6f, 0f, true, true, 12f, 0f)
-                arcToRelative(6f, 6f, 0f, true, true, -12f, 0f)
-                close()
-                moveTo(8.8f, 15f)
-                arcToRelative(1f, 1f, 0f, true, true, 2f, 0f)
-                arcToRelative(1f, 1f, 0f, true, true, -2f, 0f)
-                close()
-                moveTo(13.2f, 15f)
-                arcToRelative(1f, 1f, 0f, true, true, 2f, 0f)
-                arcToRelative(1f, 1f, 0f, true, true, -2f, 0f)
-                close()
-            }.build()
+        icon("Bunny", PathFillType.EvenOdd) {
+            moveTo(7f, 5.5f)
+            arcToRelative(2f, 4f, 0f, true, true, 4f, 0f)
+            arcToRelative(2f, 4f, 0f, true, true, -4f, 0f)
+            close()
+            moveTo(13f, 5.5f)
+            arcToRelative(2f, 4f, 0f, true, true, 4f, 0f)
+            arcToRelative(2f, 4f, 0f, true, true, -4f, 0f)
+            close()
+            moveTo(6f, 15.5f)
+            arcToRelative(6f, 6f, 0f, true, true, 12f, 0f)
+            arcToRelative(6f, 6f, 0f, true, true, -12f, 0f)
+            close()
+            moveTo(8.8f, 15f)
+            arcToRelative(1f, 1f, 0f, true, true, 2f, 0f)
+            arcToRelative(1f, 1f, 0f, true, true, -2f, 0f)
+            close()
+            moveTo(13.2f, 15f)
+            arcToRelative(1f, 1f, 0f, true, true, 2f, 0f)
+            arcToRelative(1f, 1f, 0f, true, true, -2f, 0f)
+            close()
+        }
     }
 
     val Bands: ImageVector by lazy {

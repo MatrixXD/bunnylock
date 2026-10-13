@@ -131,7 +131,7 @@ fun BunnyApp(vm: MainViewModel) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(onClick = { vm.connect() }, shapes = ButtonDefaults.shapes()) { Text("Try again") }
+                    Button(onClick = vm::connect, shapes = ButtonDefaults.shapes()) { Text("Try again") }
                     TextButton(onClick = vm::copyDiagnostics, shapes = ButtonDefaults.shapes()) { Text("Copy diagnostics") }
                 }
             }

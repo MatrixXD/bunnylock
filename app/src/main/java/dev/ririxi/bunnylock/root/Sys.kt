@@ -47,8 +47,7 @@ object Sys {
 
         val knownAtNodes =
             Mediatek.CANDIDATES + listOf(Pixel.NODE, "/dev/smd7", "/dev/smd11", "/dev/at_mdm0", "/dev/stty_lte0", "/dev/stty_nr0")
-        val atNodes = JSONArray()
-        knownAtNodes.distinct().filter { File(it).exists() }.forEach { atNodes.put(it) }
+        val atNodes = JSONArray(knownAtNodes.distinct().filter { File(it).exists() })
 
         val samsungMenu =
             Os.getuid() == 0 &&
@@ -113,9 +112,7 @@ object Sys {
             failures += failureLine(output)
         }
         val denied = failures.firstOrNull { "Permission Denial" in it }
-        if (denied !== null) {
-            throw IllegalStateException("This phone only lets Samsung's own apps open its band menu, so it needs root ($denied).")
-        }
+        check(denied === null) { "This phone only lets Samsung's own apps open its band menu, so it needs root ($denied)." }
         throw IllegalStateException(failures.joinToString(" / ").ifEmpty { "Couldn't find the Samsung band menu on this phone." })
     }
 

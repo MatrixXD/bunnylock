@@ -188,6 +188,7 @@ class QmiResponse(
                 0x3C -> "an invalid state change (0x3C)"
                 0x4A -> "info not available (0x4A)"
                 0x52 -> "access denied (0x52)"
+                0x5A -> "not possible in the modem's current state (0x5A)"
                 0x5E -> "not supported (0x5E)"
                 else -> "error 0x%04X".format(code)
             }

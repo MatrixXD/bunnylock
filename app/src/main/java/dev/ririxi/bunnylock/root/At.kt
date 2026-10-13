@@ -17,10 +17,13 @@ object At {
         command: String,
         timeoutMs: Int = 4000,
     ): String {
-        if (node.startsWith(OemHook.PREFIX)) {
+        val throughRil = node.startsWith(OemHook.PREFIX)
+        if (throughRil || node.startsWith(OemHook.RAW_PREFIX)) {
             // A reply through the RIL takes longer than one from a tty, so short timeouts are raised.
             val rilTimeoutMs = maxOf(timeoutMs, 10_000)
-            return cleanReply(OemHook.send(OemHook.slotOf(node), command, rilTimeoutMs), command, node)
+            val slot = OemHook.slotOf(node)
+            val reply = if (throughRil) OemHook.send(slot, command, rilTimeoutMs) else OemHook.sendRaw(slot, command, rilTimeoutMs)
+            return cleanReply(reply, command, node)
         }
         val fd =
             try {
@@ -43,11 +46,8 @@ object At {
         timeoutMs: Int = 4000,
     ): String {
         val reply = send(node, command, timeoutMs)
-        if (reply.lines().none { it == "OK" }) {
-            throw IOException(
-                "The modem didn't accept $command. It replied: ${reply.lines().joinToString(" ")}",
-            )
-        }
+        val lines = reply.lines()
+        if (lines.none { it == "OK" }) throw IOException("The modem didn't accept $command. It replied: ${lines.joinToString(" ")}")
         return reply
     }
 

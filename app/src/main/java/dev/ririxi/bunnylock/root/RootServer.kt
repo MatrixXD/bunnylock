@@ -93,17 +93,11 @@ object RootServer {
         val subId = Aosp.resolveSubId(requestedSubId, simSlot)
         val persist = request.optBoolean("persist", true)
         return when (val command = request.getString("cmd")) {
-            "ping" -> {
-                JSONObject().put("uid", Os.getuid()).put("version", VERSION)
-            }
+            "ping" -> JSONObject().put("uid", Os.getuid()).put("version", VERSION)
 
-            "detect" -> {
-                Sys.detect()
-            }
+            "detect" -> Sys.detect()
 
-            "aosp.state" -> {
-                Aosp.state(subId)
-            }
+            "aosp.state" -> Aosp.state(subId)
 
             "aosp.setAllowed" -> Aosp.setAllowed(subId, request.getLong("mask"), request.optInt("slot", simSlot))
 

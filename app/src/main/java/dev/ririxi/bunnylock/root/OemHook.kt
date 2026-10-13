@@ -26,6 +26,9 @@ private typealias OemRequest = (slot: Int, request: ByteArray, response: ByteArr
 object OemHook {
     const val PREFIX = "ril:"
 
+    /** "rilraw:<sim>" in the AT console reaches the OEM request route even when the search passed it over. */
+    const val RAW_PREFIX = "rilraw:"
+
     private const val MEDIATEK_PHONE_SERVICE = "phoneEx"
     private const val PHONE_SERVICE = "phone"
 
@@ -35,6 +38,9 @@ object OemHook {
 
     // Longer than CALLBACK_TIMEOUT_MS, so a callback that never comes is reported as that and not as this timeout.
     private const val AT_METHOD_PROBE_TIMEOUT_MS = 9000
+
+    // MediaTek's sendAtCmd says "Fail for slotId=0 token= atCmd=" when the modem answered ERROR.
+    private const val SERVICE_FAILURE = "Fail for slotId"
 
     private val FRAMEWORK_DIRS =
         listOf("/system/framework", "/system_ext/framework", "/product/framework", "/vendor/framework", "/odm/framework")
@@ -63,6 +69,9 @@ object OemHook {
 
     /** What the search looked at and what went wrong, for diagnostics. */
     private val probeLog = ArrayList<String>()
+
+    /** Candidates that didn't answer a plain "AT". They may still answer real commands. */
+    private val passedOver = ArrayList<Target>()
 
     private val probe: Result<Target> by lazy { runCatching { findWorkingTarget() } }
 
@@ -156,7 +165,7 @@ object OemHook {
         method: Method,
     ): OemRequest? {
         asyncAtAdapter(service, method)?.let { return it }
-        val invoke: ((Int, ByteArray) -> Any?) =
+        val invoke: (Int, ByteArray) -> Any? =
             when {
                 method.takes(String::class.java) -> { _, request -> method.invoke(service, commandText(request)) }
 
@@ -244,7 +253,8 @@ object OemHook {
             candidate.omitsFinalResult = true
             return true
         }
-        probeLog += "${candidate.label} replied: ${reply.trim().ifEmpty { "nothing" }}"
+        probeLog += "${candidate.label} replied: ${lines.filter { it.isNotEmpty() }.joinToString(" ").ifEmpty { "nothing" }}"
+        passedOver += candidate
         return false
     }
 
@@ -259,11 +269,8 @@ object OemHook {
         }
         // ITelephony routes to the RIL's OEM hook. Only MediaTek's RIL answers it, others never reply.
         if (isMediatek()) {
-            val rawCandidates =
-                serviceBinder(PHONE_SERVICE)?.let { candidatesOrNone(PHONE_SERVICE, it) }.orEmpty().filter {
-                    !it.isAtMethod
-                }
-            val found = rawCandidates.firstOrNull(::tryTarget)
+            val phoneCandidates = serviceBinder(PHONE_SERVICE)?.let { candidatesOrNone(PHONE_SERVICE, it) }.orEmpty()
+            val found = phoneCandidates.filter { !it.isAtMethod }.firstOrNull(::tryTarget)
             if (found !== null) return found
         }
         throw IOException("No OEM request passthrough answered on this phone.")
@@ -285,7 +292,19 @@ object OemHook {
     fun diagnostics(): List<String> = probe.let { probeLog.distinct() }
 
     /** The slot of a "ril:<sim>" node, where SIMs count from 1. Without a readable number it is the first SIM. */
-    fun slotOf(node: String): Int = (node.removePrefix(PREFIX).toIntOrNull() ?: 1) - 1
+    fun slotOf(node: String): Int = (node.substringAfter(':').toIntOrNull() ?: 1) - 1
+
+    /** Sends through the OEM request route, for trying commands on it by hand. Nothing else uses a route the search passed over. */
+    fun sendRaw(
+        slot: Int,
+        command: String,
+        timeoutMs: Int,
+    ): String {
+        val target =
+            (listOfNotNull(workingTarget) + passedOver).firstOrNull { !it.isAtMethod }
+                ?: throw IOException("This phone has no OEM request route to try.")
+        return sendTo(target, slot, command, timeoutMs)
+    }
 
     fun send(
         slot: Int,
@@ -293,7 +312,8 @@ object OemHook {
         timeoutMs: Int,
     ): String {
         val target = workingTarget ?: throw IOException("No RIL passthrough is available on this phone.")
-        return sendTo(target, slot, command, timeoutMs)
+        val reply = sendTo(target, slot, command, timeoutMs)
+        return if (reply.trimStart().startsWith(SERVICE_FAILURE)) "ERROR" else reply
     }
 
     /** The request runs on [executor] because a service that never answers would otherwise block the caller for good. */
@@ -316,12 +336,25 @@ object OemHook {
                 val cause = (e.cause as? InvocationTargetException)?.targetException ?: e.cause
                 throw IOException("The service refused $command (${cause?.javaClass?.simpleName}: ${cause?.message}).")
             }
-        // A negative length is a RIL error. The modem's own reply was "ERROR".
-        if (length < 0) return "ERROR"
+        // A negative length is minus a RIL error code. It is kept in the reply, because it says why the request failed.
+        if (length < 0) return "${rilErrorText(-length)}\nERROR"
         val reply = String(response, 0, minOf(length, response.size), Charsets.ISO_8859_1)
         val hasFinalResult = reply.lines().map { it.trim() }.any { it == "OK" || isErrorLine(it) }
         return if (target.omitsFinalResult && !hasFinalResult) "$reply\nOK" else reply
     }
 
-    private fun isErrorLine(line: String): Boolean = line == "ERROR" || line.startsWith("+CME ERROR")
+    private fun isErrorLine(line: String): Boolean = line == "ERROR" || line.startsWith("+CME ERROR") || line.startsWith("+CMS ERROR")
+
+    /** e.g. "RIL error 6 (REQUEST_NOT_SUPPORTED)". The name is Android's own for that code, when it has one. */
+    private fun rilErrorText(code: Int): String {
+        val name =
+            runCatching {
+                Class
+                    .forName("com.android.internal.telephony.CommandException\$Error")
+                    .enumConstants
+                    ?.getOrNull(code)
+                    ?.toString()
+            }.getOrNull()
+        return if (name === null) "RIL error $code" else "RIL error $code ($name)"
+    }
 }

@@ -276,23 +276,14 @@ fun ToolsScreen(
                     item { InfoItem(it, "Modem command passthrough", device.mtkOemHookStatus) }
                     if (device.mtkOemHookChecked.isNotEmpty()) {
                         item { shapes ->
+                            val checkedServicesText: @Composable () -> Unit = {
+                                Text(device.mtkOemHookChecked.joinToString("\n"), style = MaterialTheme.typography.bodySmall)
+                            }
                             SegmentedListItem(
                                 onClick = { checkedServicesOpen = !checkedServicesOpen },
                                 shapes = shapes,
                                 colors = segmentColors(),
-                                supportingContent =
-                                    if (checkedServicesOpen) {
-                                        (
-                                            {
-                                                Text(
-                                                    device.mtkOemHookChecked.joinToString("\n"),
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                )
-                                            }
-                                        )
-                                    } else {
-                                        null
-                                    },
+                                supportingContent = if (checkedServicesOpen) checkedServicesText else null,
                                 trailingContent = {
                                     Icon(
                                         Icons.Rounded.KeyboardArrowDown,

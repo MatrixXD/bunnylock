@@ -20,9 +20,10 @@ class RootClient(
 
     override suspend fun start(): JSONObject {
         val hello = super.start()
-        if (hello.optInt("uid", -1) != 0) {
+        val uid = hello.optInt("uid", -1)
+        if (uid != 0) {
             stop()
-            throw RootException("The root helper isn't running as root (uid ${hello.optInt("uid")}).")
+            throw RootException("The root helper isn't running as root (uid $uid).")
         }
         return hello
     }

@@ -33,12 +33,10 @@ object LockNotifier {
         lines: List<String>,
         lockedSinceMillis: Long,
     ) {
-        val needsPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-        if (needsPermission &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        val permissionMissing =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (permissionMissing) return
         ensureChannel(context)
         val openApp =
             PendingIntent.getActivity(

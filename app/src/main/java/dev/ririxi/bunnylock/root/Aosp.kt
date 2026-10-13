@@ -23,12 +23,20 @@ object Aosp {
     /** TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_USER. */
     private const val REASON_USER = 0
 
-    // Bits of an allowed-network-types bitmask (TelephonyManager.NETWORK_TYPE_BITMASK_*): bit number = NETWORK_TYPE_* - 1.
-    private const val LTE_BIT = 0x1000L
-    private const val LTE_CA_BIT = 0x40000L
+    /** An allowed network types bitmask of NETWORK_TYPE_* values: type n is bit n - 1. */
+    private fun bitsOf(vararg networkTypes: Int): Long = networkTypes.fold(0L) { mask, networkType -> mask or (1L shl (networkType - 1)) }
 
     /** NETWORK_TYPE_CDMA, EVDO_0, EVDO_A, 1xRTT, EVDO_B and EHRPD. */
-    private val CDMA_BITS = listOf(4, 5, 6, 7, 12, 14).fold(0L) { mask, networkType -> mask or (1L shl (networkType - 1)) }
+    private val CDMA_BITS = bitsOf(4, 5, 6, 7, 12, 14)
+
+    /** The network types of 2G, 3G, 4G and 5G, in that order. LTE carrier aggregation counts as 4G. */
+    private val GENERATION_BITS =
+        listOf(
+            bitsOf(1, 2, 4, 7, 11, 16),
+            bitsOf(3, 5, 6, 8, 9, 10, 12, 14, 15, 17),
+            bitsOf(13, 19),
+            bitsOf(20),
+        )
 
     // TelephonyManager.NR_DUAL_CONNECTIVITY_ENABLE and ENABLE_NR_DUAL_CONNECTIVITY_SUCCESS (system APIs, so not in the SDK).
     private const val NR_DC_ENABLE = 1
@@ -161,8 +169,13 @@ object Aosp {
 
     private fun maskText(mask: Long?): String = mask?.let { "0x%X".format(it) } ?: "unavailable"
 
-    /** Counts LTE carrier aggregation as plain LTE, so a modem readback that differs from the request only in that bit still matches. */
-    private fun normalizeMask(mask: Long): Long = if (mask and LTE_CA_BIT == 0L) mask else (mask and LTE_CA_BIT.inv()) or LTE_BIT
+    private fun errorText(error: Throwable): String = "${error.javaClass.simpleName}: ${error.message}"
+
+    /**
+     * Which of 2G, 3G, 4G and 5G a mask allows. A modem reads a mask back without the network types it lacks
+     * (TD-SCDMA or CDMA, say), so a request and its readback are compared by generation and not bit by bit.
+     */
+    private fun generations(mask: Long): List<Boolean> = GENERATION_BITS.map { mask and it != 0L }
 
     /** Every network-mode value the framework will tell, for the error message when a mode is refused. */
     private fun networkModeDiagnostic(
@@ -195,6 +208,12 @@ object Aosp {
         ).joinToString(", ")
     }
 
+    private fun supportedTypes(): Long? {
+        // A phone with 5G on one SIM at a time only reports it on that slot.
+        val slotMasks = listOf(0, 1).mapNotNull { slot -> readMask("getRadioAccessFamily", slot, callingPackage) }
+        return slotMasks.fold(0L) { mask, slotMask -> mask or slotMask }.takeIf { it > 0 }
+    }
+
     /** Every value is optional: a getter that this Android version lacks or that fails just leaves its key out. */
     fun state(subId: Int): JSONObject {
         val json = JSONObject()
@@ -204,6 +223,7 @@ object Aosp {
         userAllowed?.let { json.put("userAllowed", it) }
         modemAllowed?.let { json.put("modemAllowed", it) }
         readMask("getEffectiveAllowedNetworkTypes", subId)?.let { json.put("effectiveAllowed", it) }
+        supportedTypes()?.let { json.put("supportedTypes", it) }
         runCatching { json.put("nrDc", call("isNrDualConnectivityEnabled", subId) as Boolean) }
         runCatching {
             @Suppress("UNCHECKED_CAST")
@@ -237,10 +257,8 @@ object Aosp {
                     .newInstance(numeric, numeric, numeric)
             }
         val registered = call("setNetworkSelectionModeManual", subId, operatorInfo, persist) as Boolean
-        if (!registered) {
-            throw IllegalStateException(
-                "Couldn't register on ${numeric.take(3)} ${numeric.drop(3)}. The network may be out of range, or it may not allow this SIM.",
-            )
+        check(registered) {
+            "Couldn't register on ${numeric.take(3)} ${numeric.drop(3)}. The network may be out of range, or it may not allow this SIM."
         }
         return JSONObject().put("plmn", numeric)
     }
@@ -280,24 +298,20 @@ object Aosp {
             val result = runCatching { setAllowedOnce(subId, attempt) }
             val readback = readMask("getAllowedNetworkTypesBitmask", subId)
             val accepted = result.getOrNull() == true
-            if (accepted && (readback === null || normalizeMask(readback) == normalizeMask(attempt))) {
+            if (accepted && (readback === null || generations(readback) == generations(attempt))) {
                 return JSONObject().put("allowed", attempt).put("requested", mask)
             }
             val error = result.exceptionOrNull()
             val failure =
                 when {
-                    error !== null -> "${error.javaClass.simpleName}: ${error.message}"
+                    error !== null -> errorText(error)
                     accepted -> "reported success, but modem readback is ${maskText(readback)}"
                     else -> "refused"
                 }
             failures += "mask 0x%X %s".format(attempt, failure)
         }
-        throw IllegalStateException(
-            "The radio refused this network mode (${failures.joinToString("; ")}). Before: $before. After: ${networkModeDiagnostic(
-                subId,
-                slot,
-            )}.",
-        )
+        val after = networkModeDiagnostic(subId, slot)
+        throw IllegalStateException("The radio refused this network mode (${failures.joinToString("; ")}). Before: $before. After: $after.")
     }
 
     /** [state] is a TelephonyManager.NR_DUAL_CONNECTIVITY_* value: 1 = enable EN-DC, 2 = disable, 3 = disable immediately. */
@@ -415,25 +429,21 @@ object Aosp {
                     reply: Parcel?,
                     flags: Int,
                 ): Boolean {
-                    if (code == FIRST_CALL_TRANSACTION) {
-                        result =
-                            runCatching {
-                                data.enforceInterface(BOOLEAN_CONSUMER)
-                                data.readInt() != 0
-                            }.getOrNull()
-                        callbackPath = "binder"
-                        latch.countDown()
-                        return true
-                    }
-                    return super.onTransact(code, data, reply, flags)
+                    if (code != FIRST_CALL_TRANSACTION) return super.onTransact(code, data, reply, flags)
+                    result =
+                        runCatching {
+                            data.enforceInterface(BOOLEAN_CONSUMER)
+                            data.readInt() != 0
+                        }.getOrNull()
+                    callbackPath = "binder"
+                    latch.countDown()
+                    return true
                 }
             }
         val callback =
             Proxy.newProxyInstance(consumerInterface.classLoader, arrayOf(consumerInterface)) { _, method, args ->
                 when (method.name) {
-                    "asBinder" -> {
-                        binder
-                    }
+                    "asBinder" -> binder
 
                     "accept" -> {
                         result = args?.get(0) as? Boolean
@@ -442,13 +452,9 @@ object Aosp {
                         null
                     }
 
-                    "hashCode" -> {
-                        System.identityHashCode(binder)
-                    }
+                    "hashCode" -> System.identityHashCode(binder)
 
-                    "equals" -> {
-                        false
-                    }
+                    "equals" -> false
 
                     "toString" -> "BunnyBooleanConsumer"
 
@@ -459,18 +465,13 @@ object Aosp {
         val callError = runCatching { call("setSystemSelectionChannels", specifiers, subId, callback) }.exceptionOrNull()
         if (callError !== null) {
             throw IllegalStateException(
-                "Android's radio service couldn't start the channel lock. $requestDiagnostic; error=${callError.javaClass.simpleName}: ${callError.message}",
+                "Android's radio service couldn't start the channel lock. $requestDiagnostic; error=${errorText(callError)}",
                 callError,
             )
         }
         val callbackReceived = latch.await(CHANNELS_CALLBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        val callbackDiagnostic =
-            if (callbackReceived) {
-                "callback=$result via $callbackPath"
-            } else {
-                "callback timed out"
-            }
+        val callbackDiagnostic = if (callbackReceived) "callback=$result via $callbackPath" else "callback timed out"
         return result to "$callbackDiagnostic after ${elapsedMs}ms"
     }
 
@@ -479,7 +480,7 @@ object Aosp {
             @Suppress("UNCHECKED_CAST")
             val current = call("getSystemSelectionChannels", subId) as? List<RadioAccessSpecifier>
             specsToJson(current.orEmpty()).toString()
-        }.getOrElse { "${it.javaClass.simpleName}: ${it.message}" }
+        }.getOrElse(::errorText)
 
     /** When the radio HAL doesn't support or refuses the modem reboot, the radio is power-cycled instead and the reason is returned as rebootError. */
     fun rebootModem(
@@ -490,9 +491,7 @@ object Aosp {
         val failure = reboot.exceptionOrNull()
         if (failure !== null && failure !is UnsupportedOperationException) throw failure
         if (reboot.getOrNull() == true) return JSONObject().put("ok", true).put("method", "modem")
-        val error =
-            failure?.let { "${it.javaClass.simpleName}: ${it.message}" }
-                ?: "The radio HAL refused the modem reboot"
+        val error = failure?.let(::errorText) ?: "The radio HAL refused the modem reboot"
         return cycleSubscriberRadio(subId).put("rebootError", error)
     }
 
@@ -550,10 +549,19 @@ object Aosp {
     }
 
     fun radioCycle(): JSONObject {
-        Sys.sh("cmd connectivity airplane-mode enable")
-        Thread.sleep(RADIO_OFF_PAUSE_MS)
-        Sys.sh("cmd connectivity airplane-mode disable")
+        inAirplaneMode {}
         return JSONObject().put("cycled", true)
+    }
+
+    /** Runs [block] with every radio off. Airplane mode goes off again even when [block] fails. */
+    fun <T> inAirplaneMode(block: () -> T): T {
+        Sys.sh("cmd connectivity airplane-mode enable")
+        try {
+            Thread.sleep(RADIO_OFF_PAUSE_MS)
+            return block()
+        } finally {
+            Sys.sh("cmd connectivity airplane-mode disable")
+        }
     }
 
     private fun specsToJson(specifiers: List<RadioAccessSpecifier>): JSONArray {

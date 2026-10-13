@@ -9,7 +9,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
-import dev.ririxi.bunnylock.root.RootServer
 import dev.ririxi.bunnylock.root.ShizukuService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred

@@ -43,6 +43,7 @@ private data class ModemState(
     val lteLock: String? = null,
     val nrLock: String? = null,
     val legacyCellLock: String? = null,
+    val mtkCellLockRefused: Boolean = false,
     val plmnLock: String? = null,
     /** The modem answered about network selection, so the framework's stored value must not override it. */
     val plmnReported: Boolean = false,
@@ -74,6 +75,10 @@ private const val QMI_NR_LOCK_PCI = 0
 private const val QMI_NR_LOCK_FREQUENCY = 1
 private const val QMI_NR_LOCK_SEVERAL_PCIS = 3
 private const val QMI_NR_LOCK_GNB_LIST = 4
+
+// Long enough for the helper to go through airplane mode when the modem only changes the lock with LTE off.
+private const val QC_LTE_LOCK_TIMEOUT_MS = 60_000L
+private const val QC_LTE_OFF_NOTE = "This modem only changes the LTE cell lock with the radio off, so airplane mode came on for a moment."
 
 // The access technology numbers MediaTek's cell lock command takes and reports.
 private const val MTK_ACT_GSM = 0
@@ -169,9 +174,7 @@ class MainViewModel(
                     else -> Access.SHIZUKU_ADB
                 }
             val shellOnly = access == Access.SHIZUKU_ADB
-            if (!shellOnly && !hello.optBoolean("qrtrLib")) {
-                log("The QRTR library didn't load (${hello.optString("libError").asClause()}), so QMI won't work.")
-            }
+            if (!shellOnly && !hello.optBoolean("qrtrLib")) log("The QRTR library didn't load (${hello.optString("libError").asClause()}), so QMI won't work.")
             showConnectStep("Checking what this phone's modem offers…")
             // Probing every vendor telephony service for a modem passthrough is slow on phones that have many.
             val device = DeviceInfo.from(helper.call("detect", 90_000))
@@ -319,7 +322,8 @@ class MainViewModel(
         uiState.sims.firstOrNull { it.slot == uiState.sim - 1 }?.subId ?: SubscriptionManager.getDefaultSubscriptionId()
 
     fun setSim(sim: Int) {
-        updateState { copy(sim = sim) }
+        val atNode =if (uiState.atNode.startsWith(RIL_NODE_PREFIX)) rilNode(sim) else uiState.atNode
+        updateState { copy(sim = sim, atNode = atNode) }
         refresh()
     }
 
@@ -384,17 +388,18 @@ class MainViewModel(
         }
         updateState { copy(busy = true) }
         try {
-            val message = block() ?: successMessage
-            log(message)
-            _events.emit(message)
+            report(block() ?: successMessage)
             if (refreshAfter) refreshNow()
         } catch (e: Exception) {
-            val message = "Couldn't $goal. ${reason(e)}"
-            log(message)
-            _events.emit(message)
+            report("Couldn't $goal. ${reason(e)}")
         } finally {
             updateState { copy(busy = false) }
         }
+    }
+
+    private suspend fun report(message: String) {
+        log(message)
+        _events.emit(message)
     }
 
     /**
@@ -453,9 +458,7 @@ class MainViewModel(
                 restartRadio()
                 return
             }
-        if (result.optBoolean("airplaneMode")) {
-            log("SIM ${uiState.sim}'s radio didn't restart on its own, so airplane mode was toggled instead.")
-        }
+        if (result.optBoolean("airplaneMode")) log("SIM ${uiState.sim}'s radio didn't restart on its own, so airplane mode was toggled instead.")
     }
 
     /**
@@ -556,6 +559,14 @@ class MainViewModel(
         return BandGroupState(group, supported, current, selected = current ?: supported.toSet())
     }
 
+    private fun has5g(aospState: JSONObject?): Boolean {
+        val supported = aospState?.optLong("supportedTypes") ?: 0L
+        val reports4g = supported and Masks.G4 != 0L
+        val reports5g = supported and Masks.G5 != 0L
+        // A list without 4G is no real answer, so that phone keeps its 5G bands.
+        return reports5g || !reports4g
+    }
+
     fun refresh() =
         viewModelScope.launch {
             if (uiState.root == RootState.Granted && !helper.running) reconnect() else refreshNow()
@@ -570,8 +581,8 @@ class MainViewModel(
             val aospState = runCatching { helper.call("aosp.state") { put("subId", subscriptionId) } }.getOrNull()
             val modem =
                 when (uiState.backend) {
-                    Backend.QUALCOMM -> loadQualcomm(sim)
-                    Backend.MEDIATEK -> loadMediatek()
+                    Backend.QUALCOMM -> loadQualcomm(sim, aospState)
+                    Backend.MEDIATEK -> loadMediatek(sim, aospState)
                     Backend.PIXEL -> loadPixel(sim, aospState)
                     Backend.ANDROID, null -> loadHal(sim, aospState)
                 }
@@ -588,13 +599,15 @@ class MainViewModel(
                 }
             val strayChannel =
                 when (uiState.backend) {
-                    Backend.QUALCOMM, Backend.MEDIATEK -> null
+                    Backend.QUALCOMM -> null
+                    Backend.MEDIATEK -> if (modem.mtkCellLockRefused) strayChannel(cells, channelSpecs(aospState, sim)) else null
                     Backend.PIXEL, Backend.ANDROID, null -> strayChannel(cells, channelSpecs(aospState, sim))
                 }
             updateState {
                 copy(
                     groups = groups,
                     strayChannel = strayChannel,
+                    mtkCellLockRefused = modem.mtkCellLockRefused,
                     nrMode = modem.nrMode,
                     lteLock = modem.lteLock,
                     nrLock = modem.nrLock,
@@ -606,14 +619,13 @@ class MainViewModel(
                     homeName = telephony.simOperatorName?.takeIf { it.isNotBlank() },
                     cells = cells,
                     allowedMask = aospState?.takeIf { it.has("allowed") }?.optLong("allowed"),
-                    nrDc = aospState?.takeIf { it.has("nrDc") }?.optBoolean("nrDc"),
+                    supportedTypes = aospState?.takeIf { it.has("supportedTypes") }?.optLong("supportedTypes"),
+                    nrDc =aospState?.takeIf { it.has("nrDc") }?.optBoolean("nrDc"),
                 )
             }
             updateNotification()
         } catch (e: Exception) {
-            val message = "Couldn't refresh. ${reason(e)}"
-            log(message)
-            _events.emit(message)
+            report("Couldn't refresh. ${reason(e)}")
         } finally {
             updateState { copy(refreshing = false) }
         }
@@ -642,12 +654,31 @@ class MainViewModel(
         }
     }
 
-    private suspend fun loadQualcomm(sim: Int): ModemState {
+    private suspend fun setSamsungNrMode(mode: NrMode) {
+        val samsungMode =
+            when (mode) {
+                NrMode.BOTH -> SAMSUNG_SA_NSA
+                NrMode.NSA -> SAMSUNG_NSA_ONLY
+                NrMode.SA -> SAMSUNG_SA_ONLY
+            }
+        helper.call("samsung.setNrMode") {
+            put("sim", uiState.sim)
+            put("mode", samsungMode)
+        }
+    }
+
+    private suspend fun loadQualcomm(
+        sim: Int,
+        aospState: JSONObject?,
+    ): ModemState {
         val qcState = helper.call("qc.state") { put("sim", sim) }
         val hardware = qcState.optJSONObject("hw") ?: JSONObject()
         val hardwareNr = hardware.intList("nr")
         val groups = mutableListOf(bandGroupState(Group.LTE, hardware.intList("lte"), qcState.intList("lte")))
         when {
+            // A 4G modem can still answer with 5G band settings. It just lists no 5G bands of its own.
+            hardwareNr.isNullOrEmpty() && !has5g(aospState) -> {}
+
             qcState.has("nrSa") || qcState.has("nrNsa") -> {
                 groups += bandGroupState(Group.NR_SA, hardwareNr, qcState.intList("nrSa"))
                 groups += bandGroupState(Group.NR_NSA, hardwareNr, qcState.intList("nrNsa"))
@@ -664,7 +695,7 @@ class MainViewModel(
         return ModemState(
             groups = groups,
             nrMode = samsungNrMode ?: qcNrMode(qcState.optInt("nrMode", -1)),
-            lteLock = qcState.optJSONObject("lteLock")?.takeIf { it.optBoolean("active") }?.let(::qcLteLockLabel),
+            lteLock = qcLteLock(qcState.optJSONObject("lteLock"), sim),
             nrLock = qcState.optJSONObject("nrLock")?.takeIf { it.optBoolean("active") }?.let(::qcNrLockLabel),
             plmnLock = manualSelection?.let { qcPlmnLabel(it, qcState.optJSONObject("manualPlmn"), sim) },
             plmnReported = qcState.has("netSel"),
@@ -680,9 +711,30 @@ class MainViewModel(
             else -> null
         }
 
-    private fun qcLteLockLabel(lock: JSONObject): String {
-        val cellsByEarfcn = lock.getJSONArray("cells").objects().groupBy { it.optInt("earfcn") }
-        return cellsByEarfcn.entries.joinToString("; ") { (earfcn, cells) ->
+    /** Some modems can't report their LTE cell lock, and the report cuts the EARFCN to 16 bits. The lock this app set fills that in. */
+    private fun qcLteLock(
+        reported: JSONObject?,
+        sim: Int,
+    ): String? {
+        val saved = prefs.getString(qcLteLockKey(sim), null)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (reported === null) return saved?.let { "${qcLteLockLabel(it)} (not confirmed by the modem)" }
+        if (!reported.optBoolean("active")) {
+            prefs.edit().remove(qcLteLockKey(sim)).apply()
+            return null
+        }
+        val setEarfcn = saved?.optJSONArray("cells")?.optJSONObject(0)?.optLong("earfcn")
+        return qcLteLockLabel(reported, setEarfcn)
+    }
+
+    private fun qcLteLockKey(sim: Int) = "qcLteLock.sim$sim"
+
+    private fun qcLteLockLabel(
+        lock: JSONObject,
+        setEarfcn: Long? = null,
+    ): String {
+        val cellsByEarfcn = lock.getJSONArray("cells").objects().groupBy { it.optLong("earfcn") }
+        return cellsByEarfcn.entries.joinToString("; ") { (reported, cells) ->
+            val earfcn = setEarfcn?.takeIf { it and 0xFFFFL == reported } ?: reported
             "EARFCN $earfcn, PCI ${orList(cells.map { it.optInt("pci").toString() })}"
         }
     }
@@ -731,15 +783,32 @@ class MainViewModel(
 
     private fun plmnKey(sim: Int) = "plmn.sim$sim"
 
-    private suspend fun loadMediatek(): ModemState {
+    private suspend fun loadMediatek(
+        sim: Int,
+        aospState: JSONObject?,
+    ): ModemState {
         val mtkState = callMediatek("mtk.state")
         val supported = mtkState.optJSONObject("supported") ?: JSONObject()
         val current = mtkState.optJSONObject("current") ?: JSONObject()
         val groups = mutableListOf(bandGroupState(Group.LTE, supported.intList("lte"), current.intList("lte")))
-        if (supported.has("nr")) groups += bandGroupState(Group.NR, supported.intList("nr"), current.intList("nr"))
+        val supportedNr = supported.intList("nr")
+        if (supportedNr !== null && (supportedNr.isNotEmpty() || has5g(aospState))) {
+            groups += bandGroupState(Group.NR, supportedNr, current.intList("nr"))
+        }
         groups += bandGroupState(Group.WCDMA, supported.intList("wcdma"), current.intList("wcdma"))
         groups += bandGroupState(Group.GSM, supported.intList("gsm"), current.intList("gsm"))
-        val cellLock = mtkState.optJSONObject("cellLock")?.takeIf { it.optBoolean("active") }
+        // A modem that refuses AT+EMMCHLCK gets its cell lock through the radio HAL, so the lock is read from there too.
+        val cellLockState = mtkState.optJSONObject("cellLock")
+        if (cellLockState?.optBoolean("refused") == true) {
+            val specs = channelSpecs(aospState, sim)
+            return ModemState(
+                groups = groups,
+                lteLock = channelLock(specs, Ran.EUTRAN),
+                nrLock = channelLock(specs, Ran.NGRAN),
+                mtkCellLockRefused = true,
+            )
+        }
+        val cellLock = cellLockState?.takeIf { it.optBoolean("active") }
         val lockLabel = cellLock?.let(::mtkCellLockLabel)
         // A reply too short to name the technology is shown as an LTE lock, the kind bunnylock sets most.
         val lockedAct = cellLock?.optInt("act", MTK_ACT_LTE)
@@ -798,13 +867,13 @@ class MainViewModel(
         aospState: JSONObject?,
     ): ModemState {
         val specs = channelSpecs(aospState, sim)
+        val nrBands = channelBands(specs, Ran.NGRAN)
+        val groups = mutableListOf(bandGroupState(Group.LTE, supportedBands = null, currentBands = channelBands(specs, Ran.EUTRAN)))
+        // A 5G band lock that is already set stays in view, so it can still be cleared.
+        if (has5g(aospState) || nrBands !== null) groups += bandGroupState(Group.NR, supportedBands = null, currentBands = nrBands)
         return ModemState(
             nrMode = loadSamsungNrMode(sim),
-            groups =
-                listOf(
-                    bandGroupState(Group.LTE, supportedBands = null, currentBands = channelBands(specs, Ran.EUTRAN)),
-                    bandGroupState(Group.NR, supportedBands = null, currentBands = channelBands(specs, Ran.NGRAN)),
-                ),
+            groups = groups,
             lteLock = channelLock(specs, Ran.EUTRAN),
             nrLock = channelLock(specs, Ran.NGRAN),
         )
@@ -850,11 +919,7 @@ class MainViewModel(
     private fun lockedChannels(
         specs: List<JSONObject>,
         ran: Int,
-    ): List<Int>? =
-        specs
-            .filter { it.optInt("ran") == ran && it.isCellLock }
-            .mapNotNull { spec -> spec.intList("channels")?.takeIf { it.isNotEmpty() } }
-            .lastOrNull()
+    ): List<Int>? = specs.lastOrNull { it.optInt("ran") == ran && it.isCellLock }?.intList("channels")
 
     private fun channelName(ran: Int) = if (ran == Ran.EUTRAN) "EARFCN" else "ARFCN"
 
@@ -1106,12 +1171,6 @@ class MainViewModel(
 
     fun setNrMode(mode: NrMode) =
         launchAction("switch the 5G mode to ${mode.label}", "5G mode switched to ${mode.label}.") {
-            val samsungMode =
-                when (mode) {
-                    NrMode.BOTH -> SAMSUNG_SA_NSA
-                    NrMode.NSA -> SAMSUNG_NSA_ONLY
-                    NrMode.SA -> SAMSUNG_SA_ONLY
-                }
             when (uiState.backend) {
                 Backend.QUALCOMM -> {
                     try {
@@ -1124,10 +1183,7 @@ class MainViewModel(
                         samsungNrModeReadbackSims -= uiState.sim
                     } catch (e: Exception) {
                         if (uiState.device?.samsungNrMode != true) throw e
-                        helper.call("samsung.setNrMode") {
-                            put("sim", uiState.sim)
-                            put("mode", samsungMode)
-                        }
+                        setSamsungNrMode(mode)
                         samsungNrModeReadbackSims += uiState.sim
                     }
                 }
@@ -1147,14 +1203,11 @@ class MainViewModel(
                 }
 
                 Backend.ANDROID if uiState.device?.samsungNrMode == true -> {
-                    helper.call("samsung.setNrMode") {
-                        put("sim", uiState.sim)
-                        put("mode", samsungMode)
-                    }
+                    setSamsungNrMode(mode)
                 }
 
                 else -> {
-                    throw IllegalStateException("The ${uiState.backend?.label ?: "current"} backend can't change the 5G mode.")
+                    error("The ${uiState.backend?.label ?: "current"} backend can't change the 5G mode.")
                 }
             }
             null
@@ -1217,18 +1270,25 @@ class MainViewModel(
             val nrPcis = parseInts(form.nrPcis)
             val nrBand = form.nrBand ?: form.nrCandidates.firstOrNull()
 
-            when (uiState.backend) {
-                Backend.QUALCOMM -> {
-                    if (lockLte) {
-                        require(ltePcis.isNotEmpty()) {
-                            "The Qualcomm LTE lock needs at least one PCI. List several to allow a group of sectors."
+            when {
+                uiState.backend == Backend.QUALCOMM -> {
+                    val lteNote =
+                        if (lockLte) {
+                            require(ltePcis.isNotEmpty()) {
+                                "The Qualcomm LTE lock needs at least one PCI. List several to allow a group of sectors."
+                            }
+                            val result =
+                                helper.call("qc.lteLock", QC_LTE_LOCK_TIMEOUT_MS) {
+                                    put("sim", uiState.sim)
+                                    put("earfcn", earfcn)
+                                    put("pcis", JSONArray(ltePcis))
+                                }
+                            val cells = JSONArray(ltePcis.map { JSONObject().put("pci", it).put("earfcn", earfcn) })
+                            prefs.edit().putString(qcLteLockKey(uiState.sim), JSONObject().put("cells", cells).toString()).apply()
+                            if (result.optBoolean("airplaneMode")) QC_LTE_OFF_NOTE else null
+                        } else {
+                            null
                         }
-                        helper.call("qc.lteLock") {
-                            put("sim", uiState.sim)
-                            put("earfcn", earfcn)
-                            put("pcis", JSONArray(ltePcis))
-                        }
-                    }
                     if (lockNr) {
                         helper.call("qc.nrLock") {
                             put("sim", uiState.sim)
@@ -1252,26 +1312,25 @@ class MainViewModel(
                             }
                         }
                     }
-                    null
+                    lteNote?.let { "Cell locked. $it" }
                 }
 
-                Backend.MEDIATEK -> {
+                uiState.mtkAtCellLock -> {
+                    val pcis = if (lockLte) ltePcis else nrPcis
                     if (lockLte) {
-                        mtkCellLock(MTK_ACT_LTE, earfcn, ltePcis.firstOrNull())
+                        mtkCellLock(MTK_ACT_LTE, earfcn, pcis.firstOrNull())
                     } else {
-                        mtkCellLock(MTK_ACT_NR, arfcn, nrPcis.firstOrNull())
+                        mtkCellLock(MTK_ACT_NR, arfcn, pcis.firstOrNull())
                     }
                     restartSimRadio()
-                    if (lockLte &&
-                        lockNr
-                    ) {
-                        "LTE anchor locked. MediaTek can only hold one lock at a time, so NR follows the anchor."
-                    } else {
-                        null
-                    }
+                    val anchorOnly = lockLte && lockNr
+                    val outcome =
+                        if (anchorOnly) "LTE anchor locked. MediaTek can only hold one lock at a time, so NR follows the anchor." else "Cell locked."
+                    val pciNote = if (pcis.size > 1) "MediaTek locks to one PCI, so only PCI ${pcis[0]} was used." else null
+                    if (anchorOnly || pciNote !== null) listOfNotNull(outcome, pciNote).joinToString(" ") else null
                 }
 
-                Backend.PIXEL, Backend.ANDROID, null -> {
+                else -> {
                     val pcisGiven = ltePcis.isNotEmpty() || nrPcis.isNotEmpty()
                     lockCellsThroughHal(lockLte, earfcn, lockNr, arfcn, nrBand, pcisGiven)
                 }
@@ -1325,13 +1384,15 @@ class MainViewModel(
             return "This phone's radio software doesn't accept channel locks, so only the band ($bandsText) was locked."
         }
         val heldSpecs = savedChannelSpecs()
-        val cells = settledCells { strayChannel(it, heldSpecs) }
-        val stray = strayChannel(cells, heldSpecs)
-        if (stray !==
-            null
-        ) {
-            return "Android accepted the cell lock, but the phone is still on $stray. This modem doesn't seem to follow frequency locks sent this way."
+
+        suspend fun settledStray() = strayChannel(settledCells { strayChannel(it, heldSpecs) }, heldSpecs)
+        var stray = settledStray()
+        // A MediaTek modem takes the lock right away but may only move to it once the radio has restarted.
+        if (stray !== null && uiState.device?.vendor == "mediatek") {
+            runCatching { restartSimRadio() }
+            stray = settledStray()
         }
+        if (stray !== null) return "Android accepted the cell lock, but the phone is still on $stray. This modem doesn't seem to follow frequency locks sent this way."
         return if (pcisGiven) "Locked to the frequency only. The radio HAL can't lock to a PCI." else null
     }
 
@@ -1348,13 +1409,16 @@ class MainViewModel(
 
     fun unlockCells() =
         launchAction("clear the cell lock", "Cell lock cleared.") {
-            when (uiState.backend) {
-                Backend.QUALCOMM -> {
-                    if (uiState.lteLock !== null) helper.call("qc.lteUnlock") { put("sim", uiState.sim) }
+            when {
+                uiState.backend == Backend.QUALCOMM -> {
+                    val lteUnlock =
+                        if (uiState.lteLock !== null) helper.call("qc.lteUnlock", QC_LTE_LOCK_TIMEOUT_MS) { put("sim", uiState.sim) } else null
+                    prefs.edit().remove(qcLteLockKey(uiState.sim)).apply()
                     if (uiState.nrLock !== null) helper.call("qc.nrUnlock") { put("sim", uiState.sim) }
+                    if (lteUnlock?.optBoolean("airplaneMode") == true) return@launchAction "Cell lock cleared. $QC_LTE_OFF_NOTE"
                 }
 
-                Backend.MEDIATEK -> {
+                uiState.mtkAtCellLock -> {
                     callMediatek("mtk.cellUnlock")
                     restartSimRadio()
                 }
@@ -1420,9 +1484,7 @@ class MainViewModel(
         }
 
     private suspend fun clearPlmn() {
-        if (uiState.backend ==
-            Backend.QUALCOMM
-        ) {
+        if (uiState.backend == Backend.QUALCOMM) {
             runCatching {
                 helper.call("qc.clearPlmn") {
                     put("sim", uiState.sim)
@@ -1443,7 +1505,8 @@ class MainViewModel(
                         put("sim", uiState.sim)
                         put("persist", uiState.persist)
                     }
-                    runCatching { helper.call("qc.lteUnlock") { put("sim", uiState.sim) } }
+                    runCatching { helper.call("qc.lteUnlock", QC_LTE_LOCK_TIMEOUT_MS) { put("sim", uiState.sim) } }
+                        .onSuccess { prefs.edit().remove(qcLteLockKey(uiState.sim)).apply() }
                     runCatching { helper.call("qc.nrUnlock") { put("sim", uiState.sim) } }
                 }
 
@@ -1456,7 +1519,15 @@ class MainViewModel(
                         put("lte", empty)
                         if (hasNr) put("nr", empty)
                     }
-                    runCatching { callMediatek("mtk.cellUnlock") }
+                    if (uiState.mtkCellLockRefused) {
+                        val heldCellLock = savedChannelSpecs().isNotEmpty()
+                        runCatching { setChannels(JSONArray()) }
+                        if (heldCellLock) halUnlockNote(freedNr = false)?.let { return@launchAction "Everything is unlocked. $it" }
+                    } else {
+                        val heldCellLock = uiState.anyCellLock
+                        runCatching { callMediatek("mtk.cellUnlock") }
+                        if (heldCellLock) restartSimRadio()
+                    }
                 }
 
                 Backend.PIXEL -> {
@@ -1489,13 +1560,9 @@ class MainViewModel(
                     put("sim", uiState.sim)
                     put("subId", subId())
                 }
-            if (result.optString("method") == "radio") {
-                "The modem wouldn't re-attach, so the radio for SIM ${uiState.sim} was restarted instead. Reason: ${result.optString(
-                    "qmiError",
-                ).asClause()}."
-            } else {
-                null
-            }
+            if (result.optString("method") != "radio") return@launchAction null
+            val qmiError = result.optString("qmiError").asClause()
+            "The modem wouldn't re-attach, so the radio for SIM ${uiState.sim} was restarted instead. Reason: $qmiError."
         }
 
     fun rebootModem() =
@@ -1577,6 +1644,7 @@ class MainViewModel(
                 appendLine(
                     "QMI over QRTR: ${device?.qrtr}, HAL channel-lock API: ${if (device?.aospChannels == true) "present" else "absent"}, EN-DC control: ${device?.aospNrDc}",
                 )
+                appendLine("Supported network types: ${uiState.supportedTypes?.let { "0x%X".format(it) } ?: "not reported"}")
                 appendLine("AT ports: ${device?.atNodes?.joinToString(", ")}")
                 appendLine("Modem command passthrough: ${device?.mtkOemHookStatus}")
                 device?.mtkOemHookChecked?.takeIf { it.isNotEmpty() }?.let { appendLine("Checked: ${it.joinToString("; ")}") }

@@ -7,12 +7,11 @@ import org.json.JSONObject
 
 enum class Backend(
     val label: String,
-    val short: String,
 ) {
-    QUALCOMM("Qualcomm QMI", "QMI"),
-    MEDIATEK("MediaTek AT", "MTK"),
-    PIXEL("Pixel (Tensor NV)", "Pixel"),
-    ANDROID("Android radio HAL", "HAL"),
+    QUALCOMM("Qualcomm QMI"),
+    MEDIATEK("MediaTek AT"),
+    PIXEL("Pixel (Tensor NV)"),
+    ANDROID("Android radio HAL"),
 }
 
 enum class Group(
@@ -71,11 +70,14 @@ enum class NetMode(
     ;
 
     companion object {
-        /** The mode [mask] stands for. CDMA bits don't count: a phone without CDMA drops them from the mask it was given. */
+        /**
+         * The mode [mask] stands for, going by which of 2G, 3G, 4G and 5G it allows. A modem drops the network types
+         * it lacks (TD-SCDMA or CDMA, say) from the mask it was given, so the bits themselves rarely match.
+         */
         fun of(mask: Long?): NetMode? {
             mask ?: return null
-            val generationBits = Masks.G2 or Masks.G3 or Masks.G4 or Masks.G5
-            return entries.firstOrNull { (it.mask and generationBits) == (mask and generationBits) }
+            val generations = listOf(Masks.G2, Masks.G3, Masks.G4, Masks.G5)
+            return entries.firstOrNull { mode -> generations.all { (mode.mask and it != 0L) == (mask and it != 0L) } }
         }
     }
 }
@@ -281,6 +283,7 @@ data class UiState(
     val refreshing: Boolean = false,
     val groups: List<BandGroupState> = emptyList(),
     val allowedMask: Long? = null,
+    val supportedTypes: Long? = null,
     val nrMode: NrMode? = null,
     val nrDc: Boolean? = null,
     val cells: List<Cell> = emptyList(),
@@ -290,6 +293,8 @@ data class UiState(
     val legacyCellLock: String? = null,
     /** e.g. "EARFCN 75": the channel the phone is camped on although a frequency lock excludes it. */
     val strayChannel: String? = null,
+    /** The MediaTek modem doesn't take AT+EMMCHLCK, so a cell lock has to go through the radio HAL. */
+    val mtkCellLockRefused: Boolean = false,
     val form: CellForm = CellForm(),
     /** e.g. "262 01". Null when selection is automatic. */
     val plmnLock: String? = null,
@@ -331,5 +336,8 @@ data class UiState(
     val supportsNrMode get() =
         backend == Backend.QUALCOMM || backend == Backend.PIXEL ||
             (backend == Backend.ANDROID && device?.samsungNrMode == true)
-    val supportsPciLock get() = backend == Backend.QUALCOMM || backend == Backend.MEDIATEK
+    val mtkAtCellLock get() = backend == Backend.MEDIATEK && !mtkCellLockRefused
+
+    /** Every other cell lock goes through the radio HAL, which locks a frequency but never a PCI. */
+    val supportsPciLock get() = backend == Backend.QUALCOMM || mtkAtCellLock
 }
