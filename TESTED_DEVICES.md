@@ -32,11 +32,12 @@ Without root, bunnylock runs through Shizuku. Some MediaTek phones allow AT comm
 | Samsung Galaxy A57            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy M11            |   12    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy M23            |   15    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                          |
+| Samsung Galaxy M23            |   15    | Shizuku | Android radio HAL |  ❌  |  ❌   | ❌  | ❌  | Modem ignores everything |
 | Samsung Galaxy M35            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy S21 Ultra      |   15    | Shizuku | Android radio HAL |  ❌  |  ❌   | ✅  | ❌  | Modem ignores everything |
 | Samsung Galaxy S23+           |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy S23 Ultra      |   16    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                          |
-| Samsung Galaxy S24            |   16    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
+| Samsung Galaxy S24            | 16, 17  | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy S25            |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
 | Samsung Galaxy S25 Ultra      |   16    | Root    | Qualcomm QMI      |  ✅  |  ✅   | ✅  | ✅  |                          |
 | Samsung Galaxy S26 Ultra      |   17    | Shizuku | Android radio HAL |  ✅  |  ✅   | ✅  | ❌  |                          |
