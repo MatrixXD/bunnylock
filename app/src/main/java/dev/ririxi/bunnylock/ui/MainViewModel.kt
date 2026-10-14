@@ -89,6 +89,7 @@ private const val QMI_NR_LOCK_GNB_LIST = 4
 
 // Long enough for the helper to go through airplane mode when the modem only changes the lock with LTE off.
 private const val QC_LTE_LOCK_TIMEOUT_MS = 60_000L
+private const val NET_MODE_TIMEOUT_MS = 60_000L
 private const val QC_REPORTED_EARFCN_BITS = 0xFFFFL
 private const val QC_LTE_OFF_NOTE = "This modem only changes the LTE cell lock with the radio off, so airplane mode came on for a moment."
 
@@ -153,11 +154,15 @@ class MainViewModel(
         checkForUpdate()
     }
 
+    private fun appVersion(): String? {
+        val app = getApplication<Application>()
+        return runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull()
+    }
+
     private fun checkForUpdate() =
         viewModelScope.launch {
             if (!uiState.checkUpdates) return@launch
-            val app = getApplication<Application>()
-            val installed = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: return@launch
+            val installed = appVersion() ?: return@launch
             try {
                 val release = Updates.newerThan(installed)?.takeIf { it.version != prefs.getString("skippedUpdate", null) }
                 if (uiState.checkUpdates) updateState { copy(update = release) }
@@ -1349,21 +1354,23 @@ class MainViewModel(
     fun setNetMode(mode: NetMode) =
         launchAction("change the network mode", "Network mode is now \"${mode.label}\".") {
             val subscriptionId = subId()
-            try {
-                helper.call("aosp.setAllowed") {
-                    put("subId", subscriptionId)
-                    put("mask", mode.mask)
-                    put("slot", uiState.sim - 1)
+            val result =
+                try {
+                    helper.call("aosp.setAllowed", NET_MODE_TIMEOUT_MS) {
+                        put("subId", subscriptionId)
+                        put("mask", mode.mask)
+                        put("slot", uiState.sim - 1)
+                    }
+                } catch (e: Exception) {
+                    if (uiState.backend != Backend.QUALCOMM) throw e
+                    helper.call("qc.setRat") {
+                        put("sim", uiState.sim)
+                        put("mask", Masks.toQmi(mode.mask))
+                        put("persist", uiState.persist)
+                    }
                 }
-            } catch (e: Exception) {
-                if (uiState.backend != Backend.QUALCOMM) throw e
-                helper.call("qc.setRat") {
-                    put("sim", uiState.sim)
-                    put("mask", Masks.toQmi(mode.mask))
-                    put("persist", uiState.persist)
-                }
-            }
-            null
+            if (!result.optBoolean("airplaneMode")) return@launchAction null
+            "Network mode is now \"${mode.label}\". The modem only switches modes with the radio off, so airplane mode came on for a moment."
         }
 
     fun setNrMode(mode: NrMode) =
@@ -1835,7 +1842,7 @@ class MainViewModel(
         val device = uiState.device
         val text =
             buildString {
-                appendLine("bunnylock diagnostics")
+                appendLine(listOfNotNull("bunnylock", appVersion(), "diagnostics").joinToString(" "))
                 appendLine(
                     "Device: ${device?.manufacturer ?: Build.MANUFACTURER} ${device?.model ?: Build.MODEL}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
                 )

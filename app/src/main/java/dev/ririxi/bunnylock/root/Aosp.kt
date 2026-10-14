@@ -49,6 +49,8 @@ object Aosp {
     private const val CHANNELS_CALLBACK_TIMEOUT_SECONDS = 8L
 
     private const val RADIO_OFF_PAUSE_MS = 2500L
+    private const val MODE_READBACK_CHECKS = 5
+    private const val MODE_READBACK_RETRY_MS = 500L
     private const val RADIO_STATE_POLL_MS = 500L
     private const val RADIO_STATE_TIMEOUT_MS = 10_000L
 
@@ -294,26 +296,46 @@ object Aosp {
                 .filter { it != 0L }
                 .distinct()
         val failures = ArrayList<String>()
+        var notApplied: Long? = null
         for (attempt in attempts) {
             val result = runCatching { setAllowedOnce(subId, attempt) }
-            val readback = readMask("getAllowedNetworkTypesBitmask", subId)
             val accepted = result.getOrNull() == true
-            if (accepted && (readback === null || generations(readback) == generations(attempt))) {
-                return JSONObject().put("allowed", attempt).put("requested", mask)
-            }
+            if (accepted && modemSwitchesTo(subId, attempt)) return JSONObject().put("allowed", attempt).put("requested", mask)
             val error = result.exceptionOrNull()
             val failure =
                 when {
                     error !== null -> errorText(error)
-                    accepted -> "reported success, but modem readback is ${maskText(readback)}"
+                    accepted -> "reported success, but modem readback is ${maskText(readMask("getAllowedNetworkTypesBitmask", subId))}"
                     else -> "refused"
                 }
             failures += "mask 0x%X %s".format(attempt, failure)
+            if (accepted) {
+                notApplied = attempt
+                break
+            }
+        }
+        // Some modems only switch modes while no connection is open.
+        notApplied?.let { attempt ->
+            val switched = runCatching { inAirplaneMode { setAllowedOnce(subId, attempt) && modemSwitchesTo(subId, attempt) } }.getOrDefault(false)
+            if (switched) return JSONObject().put("allowed", attempt).put("requested", mask).put("airplaneMode", true)
+            failures += "mask 0x%X not taken with the radio off either".format(attempt)
         }
         val restored = previous !== null && runCatching { setAllowedOnce(subId, previous) }.getOrDefault(false)
         val restoredText = if (restored) " The previous network mode was put back." else ""
         val after = networkModeDiagnostic(subId, slot)
         throw IllegalStateException("The radio refused this network mode (${failures.joinToString("; ")}).$restoredText Before: $before. After: $after.")
+    }
+
+    private fun modemSwitchesTo(
+        subId: Int,
+        mask: Long,
+    ): Boolean {
+        repeat(MODE_READBACK_CHECKS) { check ->
+            if (check > 0) Thread.sleep(MODE_READBACK_RETRY_MS)
+            val readback = readMask("getAllowedNetworkTypesBitmask", subId)
+            if (readback === null || generations(readback) == generations(mask)) return true
+        }
+        return false
     }
 
     /** [state] is a TelephonyManager.NR_DUAL_CONNECTIVITY_* value: 1 = enable EN-DC, 2 = disable, 3 = disable immediately. */
