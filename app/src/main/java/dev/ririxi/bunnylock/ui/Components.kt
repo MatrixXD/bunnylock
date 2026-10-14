@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemColors
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.ListItemShapes
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
@@ -215,8 +216,20 @@ fun <T> ToggleGrid(
     modifier: Modifier = Modifier,
     columns: Int = 4,
     enabled: Boolean = true,
+    detail: (T) -> String? = { null },
+    accent: Boolean = false,
 ) {
-    val colors = ToggleButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
+    val scheme = MaterialTheme.colorScheme
+    val colors =
+        if (accent) {
+            ToggleButtonDefaults.colors(
+                containerColor = scheme.surfaceContainerHighest,
+                checkedContainerColor = scheme.tertiary,
+                checkedContentColor = scheme.onTertiary,
+            )
+        } else {
+            ToggleButtonDefaults.colors(containerColor = scheme.surfaceContainerHighest)
+        }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         options.chunked(columns).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -229,7 +242,17 @@ fun <T> ToggleGrid(
                         contentPadding = PaddingValues(horizontal = 4.dp),
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text(label(option), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(label(option), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            detail(option)?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = LocalContentColor.current.copy(alpha = 0.6f),
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }

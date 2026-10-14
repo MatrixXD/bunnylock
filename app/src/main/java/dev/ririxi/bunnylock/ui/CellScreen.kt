@@ -332,6 +332,7 @@ private fun NrLockFields(
             label = { "n$it" },
             onToggle = { band -> vm.updateForm { copy(nrBand = band, nrScs = Bands.nrDefaultScs(band), nrScsPicked = false) } },
             columns = 4,
+            detail = { Group.NR.frequencyName(it) },
         )
     }
     if (state.backend == Backend.QUALCOMM) {

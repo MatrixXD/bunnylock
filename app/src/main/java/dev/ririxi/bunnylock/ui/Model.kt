@@ -34,6 +34,23 @@ enum class Group(
             GSM -> "$band"
         }
 
+    fun frequencyName(band: Int): String? =
+        when (this) {
+            LTE -> Bands.LTE_FREQUENCY_NAMES[band]
+            NR, NR_SA, NR_NSA -> Bands.NR_FREQUENCY_NAMES[band]
+            WCDMA -> Bands.WCDMA_FREQUENCY_NAMES[band]
+            GSM -> null
+        }
+
+    val favoritesKey: String
+        get() =
+            when (this) {
+                LTE -> "lte"
+                NR, NR_SA, NR_NSA -> "nr"
+                WCDMA -> "wcdma"
+                GSM -> "gsm"
+            }
+
     fun defaults(): List<Int> =
         when (this) {
             LTE -> Bands.LTE
@@ -312,8 +329,11 @@ data class UiState(
     val toolOutput: String = "",
     val log: List<String> = emptyList(),
     val update: Release? = null,
+    val favoriteBands: Map<String, Set<Int>> = emptyMap(),
 ) {
     val anyBandLock get() = groups.any { it.locked }
+
+    fun favoritesOf(group: Group): Set<Int> = favoriteBands[group.favoritesKey].orEmpty()
 
     /** e.g. "B1": the band the phone is camped on although a band lock excludes it. */
     val strayBand get() = groups.firstNotNullOfOrNull { groupState -> groupState.stray?.let { groupState.group.bandLabel(it) } }

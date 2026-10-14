@@ -131,6 +131,7 @@ class MainViewModel(
                 dynamicColor = prefs.getBoolean("dynamicColor", true),
                 checkUpdates = prefs.getBoolean("checkUpdates", true),
                 atNode = prefs.getString("atNode", "") ?: "",
+                favoriteBands = loadFavoriteBands(),
             ),
         )
     val state = _state.asStateFlow()
@@ -1142,6 +1143,22 @@ class MainViewModel(
     ) = updateGroup(group) {
         copy(selected = if (band in selected) selected - band else selected + band)
     }
+
+    fun toggleFavorite(
+        group: Group,
+        band: Int,
+    ) {
+        val favorites = uiState.favoritesOf(group).let { if (band in it) it - band else it + band }
+        prefs.edit().putString(favoritesPrefKey(group.favoritesKey), favorites.sorted().joinToString(",")).apply()
+        updateState { copy(favoriteBands = favoriteBands + (group.favoritesKey to favorites)) }
+    }
+
+    private fun loadFavoriteBands(): Map<String, Set<Int>> =
+        Group.entries.map { it.favoritesKey }.distinct().associateWith { key ->
+            prefs.getString(favoritesPrefKey(key), null).orEmpty().split(',').mapNotNull { it.toIntOrNull() }.toSet()
+        }
+
+    private fun favoritesPrefKey(key: String) = "favoriteBands.$key"
 
     fun selectAll(
         group: Group,
