@@ -48,6 +48,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.ririxi.bunnylock.modem.Backend
+import dev.ririxi.bunnylock.modem.DeviceInfo
+import dev.ririxi.bunnylock.modem.andList
 import dev.ririxi.bunnylock.ui.theme.dynamicColorAvailable
 
 private val AT_COMMAND_PRESETS = listOf("ATI", "AT+EPBSE?", "AT+EPBSEH?", "AT+EMMCHLCK?", "AT+GOOGGETNV=\"NR.CONFIG.MODE\"")
@@ -72,12 +75,12 @@ fun ToolsScreen(
             SectionHeader("Backend")
             Segmented {
                 Backend.entries.forEach { backend ->
-                    val selected = state.backend == backend
-                    val needsRoot = !state.allows(backend)
+                    val selected = state.modem.backend == backend
+                    val needsRoot = !state.modem.allows(backend)
                     val hint =
                         when {
                             needsRoot -> "Needs root"
-                            state.autoBackend == backend -> "Detected for this device"
+                            state.modem.autoBackend == backend -> "Detected for this device"
                             else -> null
                         }
                     item { shapes ->
@@ -92,13 +95,13 @@ fun ToolsScreen(
                         ) { Text(backend.label) }
                     }
                 }
-                if (state.backend == Backend.QUALCOMM) {
+                if (state.modem.backend == Backend.QUALCOMM) {
                     item {
                         SwitchItem(
                             it,
                             "Keep band locks after reboot",
                             "When this is off, locks are cleared on reboot.",
-                            checked = state.persist,
+                            checked = state.modem.persist,
                             onCheckedChange = vm::setPersist,
                         )
                     }
@@ -151,7 +154,7 @@ fun ToolsScreen(
                         onClick = vm::radioCycle,
                     )
                 }
-                if (state.backend == Backend.QUALCOMM) {
+                if (state.modem.backend == Backend.QUALCOMM) {
                     item {
                         ActionItem(
                             it,
@@ -173,7 +176,7 @@ fun ToolsScreen(
                         onClick = vm::rebootModem,
                     )
                 }
-                if (state.device?.samsungMenu == true) {
+                if (state.modem.device?.samsungMenu == true) {
                     item {
                         ActionItem(
                             it,
@@ -192,12 +195,12 @@ fun ToolsScreen(
             SectionHeader("AT console")
             Panel {
                 OutlinedTextField(
-                    state.atNode,
+                    state.modem.atNode,
                     vm::setAtNode,
                     label = { Text("AT port") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    supportingText = { Text(atNodesHint(state.device)) },
+                    supportingText = { Text(atNodesHint(state.modem.device)) },
                 )
                 OutlinedTextField(
                     atCommand,
@@ -208,7 +211,7 @@ fun ToolsScreen(
                     trailingIcon = {
                         IconButton(
                             onClick = { if (atCommand.isNotBlank()) vm.sendAt(atCommand.trim()) },
-                            enabled = !state.busy && state.atNode.isNotBlank(),
+                            enabled = !state.busy && state.modem.atNode.isNotBlank(),
                         ) { Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Send") }
                     },
                 )
@@ -220,7 +223,7 @@ fun ToolsScreen(
             }
         }
 
-        if (state.backend == Backend.QUALCOMM) {
+        if (state.modem.backend == Backend.QUALCOMM) {
             item {
                 SectionHeader("QMI console")
                 Panel {
@@ -273,7 +276,7 @@ fun ToolsScreen(
         }
 
         item {
-            val device = state.device
+            val device = state.modem.device
             SectionHeader("Device")
             Segmented {
                 item {
@@ -286,7 +289,7 @@ fun ToolsScreen(
                         onClick = vm::copyDiagnostics,
                     )
                 }
-                item { InfoItem(it, "Access", state.access?.label.orEmpty()) }
+                item { InfoItem(it, "Access", state.modem.access?.label.orEmpty()) }
                 if (device !== null) {
                     item { InfoItem(it, "Modem command passthrough", device.mtkOemHookStatus) }
                     if (device.mtkOemHookChecked.isNotEmpty()) {
@@ -326,10 +329,10 @@ fun ToolsScreen(
             }
         }
 
-        if (state.log.isNotEmpty()) {
+        if (state.modem.log.isNotEmpty()) {
             item {
                 SectionHeader("Log")
-                MonospacePanel(state.log.joinToString("\n"))
+                MonospacePanel(state.modem.log.joinToString("\n"))
             }
         }
 

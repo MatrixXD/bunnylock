@@ -1,4 +1,4 @@
-package dev.ririxi.bunnylock.data
+package dev.ririxi.bunnylock.shizuku
 
 import android.content.ComponentName
 import android.content.Context
@@ -9,7 +9,9 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
-import dev.ririxi.bunnylock.root.ShizukuService
+import dev.ririxi.bunnylock.data.HelperClient
+import dev.ririxi.bunnylock.data.PrivilegedClient
+import dev.ririxi.bunnylock.data.RootException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers

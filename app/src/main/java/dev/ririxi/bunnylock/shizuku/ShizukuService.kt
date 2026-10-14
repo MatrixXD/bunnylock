@@ -1,8 +1,9 @@
-package dev.ririxi.bunnylock.root
+package dev.ririxi.bunnylock.shizuku
 
 import android.os.Binder
 import android.os.IBinder
 import android.os.Parcel
+import dev.ririxi.bunnylock.root.RootServer
 import kotlin.system.exitProcess
 
 /**
@@ -60,7 +61,7 @@ class ShizukuService : Binder() {
     }
 
     companion object {
-        private const val DESCRIPTOR = "dev.ririxi.bunnylock.root.ShizukuService"
+        private const val DESCRIPTOR = "dev.ririxi.bunnylock.shizuku.ShizukuService"
         private const val TRANSACTION_CALL = IBinder.FIRST_CALL_TRANSACTION
 
         // Shizuku stops a UserService through AIDL method id 16777114, which goes over the wire offset like any other.

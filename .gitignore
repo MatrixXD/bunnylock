@@ -7,5 +7,7 @@
 /build/
 /app/build/
 /app/.cxx/
+/modem/build/
+/modem/.cxx/
 /captures/
 .externalNativeBuild/

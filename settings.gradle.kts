@@ -20,3 +20,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "bunnylock"
 include(":app")
+include(":modem")

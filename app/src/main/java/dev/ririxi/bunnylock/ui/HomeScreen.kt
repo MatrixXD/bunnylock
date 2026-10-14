@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ririxi.bunnylock.data.Cell
 import dev.ririxi.bunnylock.data.Rat
+import dev.ririxi.bunnylock.modem.andList
 import dev.ririxi.bunnylock.ui.theme.LocalLockGreen
 
 @Composable
@@ -44,30 +45,31 @@ fun HomeScreen(
     LazyColumn(contentPadding = contentPadding.withScreenMargins(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Hero(state, onUnlock = vm::unlockEverything, onBands = { goTo(Tab.BANDS) }, onCell = { goTo(Tab.CELL) }) }
 
-        if (state.sims.size > 1) {
+        if (state.modem.sims.size > 1) {
             item {
                 SectionHeader("SIM")
                 ConnectedChoice(
-                    options = state.sims.map { it.slot + 1 },
-                    selected = state.sim,
-                    label = { simNumber -> state.sims.first { it.slot + 1 == simNumber }.name },
+                    options = state.modem.sims.map { it.slot + 1 },
+                    selected = state.modem.sim,
+                    label = { simNumber -> state.modem.sims.first { it.slot + 1 == simNumber }.name },
                     onSelect = vm::setSim,
                 )
             }
         }
 
         item {
-            val servingCells = state.cells.filter { it.registered }
+            val servingCells = state.modem.cells.filter { it.registered }
             val hasNsaSecondaryCell = servingCells.any { it.note == "NSA SCG" }
             SectionHeader(if (hasNsaSecondaryCell) "Serving cells (5G NSA)" else "Serving cell")
-            Segmented {
-                if (servingCells.isEmpty()) item { InfoItem(it, "Serving cell", "None") }
-                servingCells.forEach { cell -> item { shapes -> CellItem(shapes, cell) } }
+            if (servingCells.isEmpty()) {
+                Panel { SleepyBunny("No serving cell") }
+            } else {
+                Segmented { servingCells.forEach { cell -> item { shapes -> CellItem(shapes, cell) } } }
             }
         }
 
         item {
-            val device = state.device
+            val device = state.modem.device
             val deviceName = "${device?.manufacturer.orEmpty()} ${device?.model.orEmpty()}".trim()
             val platform =
                 listOfNotNull(
@@ -93,10 +95,10 @@ private fun Hero(
     onBands: () -> Unit,
     onCell: () -> Unit,
 ) {
-    val locked = state.anyBandLock || state.anyCellLock || state.anyPlmnLock
+    val locked = state.modem.anyBandLock || state.modem.anyCellLock || state.modem.anyPlmnLock
     val strayLocation =
-        state.strayBand?.let { "$it, outside the locked bands" }
-            ?: state.strayChannel?.let { "$it, off the locked frequency" }
+        state.modem.strayBand?.let { "$it, outside the locked bands" }
+            ?: state.modem.strayChannel?.let { "$it, off the locked frequency" }
     val lockHeld = locked && strayLocation === null
     val green = LocalLockGreen.current
     val containerColor by animateColorAsState(
@@ -131,7 +133,7 @@ private fun Hero(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                LockBadge(lockHeld, size = 88.dp, spin = true)
+                BouncyLockBadge(locked = locked, ignored = strayLocation !== null, userAction = state.busy, size = 88.dp)
             }
 
             val lockRows = activeLockRows(state)
@@ -182,9 +184,9 @@ private fun Hero(
 private fun pinnedSummary(state: UiState): String {
     val pinned =
         listOfNotNull(
-            "bands".takeIf { state.anyBandLock },
-            "cell".takeIf { state.anyCellLock },
-            "network".takeIf { state.anyPlmnLock },
+            "bands".takeIf { state.modem.anyBandLock },
+            "cell".takeIf { state.modem.anyCellLock },
+            "network".takeIf { state.modem.anyPlmnLock },
         )
     val takesSingularVerb = pinned == listOf("cell") || pinned == listOf("network")
     return when {
@@ -196,14 +198,14 @@ private fun pinnedSummary(state: UiState): String {
 
 private fun activeLockRows(state: UiState): List<Pair<String, String>> =
     buildList {
-        state.groups.filter { it.locked }.forEach { bandGroup ->
+        state.modem.groups.filter { it.locked }.forEach { bandGroup ->
             val bands = bandGroup.current!!.sorted().joinToString(", ") { bandGroup.group.bandLabel(it) }
             add(bandGroup.group.label to bands)
         }
-        state.plmnLock?.let { add("Network" to it) }
-        state.lteLock?.let { add("LTE cell" to it) }
-        state.nrLock?.let { add("NR cell" to it) }
-        state.legacyCellLock?.let { add("2G/3G cell" to it) }
+        state.modem.plmnLock?.let { add("Network" to it) }
+        state.modem.lteLock?.let { add("LTE cell" to it) }
+        state.modem.nrLock?.let { add("NR cell" to it) }
+        state.modem.legacyCellLock?.let { add("2G/3G cell" to it) }
     }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)

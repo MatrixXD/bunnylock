@@ -6,14 +6,13 @@ plugins {
 android {
     namespace = "dev.ririxi.bunnylock"
     compileSdk = 37
-    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "dev.ririxi.bunnylock"
         minSdk = 30
         targetSdk = 37
         versionCode = 1
-        versionName = "1.1.8"
+        versionName = "1.2.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
@@ -37,13 +36,6 @@ android {
         compose = true
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
     packaging {
         // The root helper System.load()s libbunnyqrtr.so from nativeLibraryDir, so it must be extracted.
         jniLibs.useLegacyPackaging = true
@@ -60,6 +52,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.core)
+    implementation(project(":modem"))
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
     debugImplementation(libs.compose.ui.tooling)

@@ -30,6 +30,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.ririxi.bunnylock.modem.Backend
+import dev.ririxi.bunnylock.modem.BandGroupState
+import dev.ririxi.bunnylock.modem.NetMode
+import dev.ririxi.bunnylock.modem.NrMode
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -41,7 +45,7 @@ fun BandsScreen(
     LazyColumn(contentPadding = contentPadding.withScreenMargins(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             SectionHeader("Network mode")
-            val currentMode = NetMode.of(state.allowedMask)
+            val currentMode = NetMode.of(state.modem.allowedMask)
             Panel {
                 ToggleGrid(
                     options = NetMode.entries,
@@ -51,16 +55,24 @@ fun BandsScreen(
                     columns = 3,
                     enabled = !state.busy,
                 )
+                state.modem.netModeHeldBack?.let { heldBack ->
+                    Text(
+                        heldBack,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp, start = 4.dp, end = 4.dp),
+                    )
+                }
             }
         }
 
         when {
-            state.supportsNrMode -> {
+            state.modem.supportsNrMode -> {
                 item {
                     SectionHeader("5G mode")
                     ConnectedChoice(
                         options = NrMode.entries,
-                        selected = state.nrMode,
+                        selected = state.modem.nrMode,
                         label = { it.label },
                         onSelect = vm::setNrMode,
                         enabled = !state.busy,
@@ -68,12 +80,12 @@ fun BandsScreen(
                 }
             }
 
-            state.device?.aospNrDc == true -> {
+            state.modem.device?.aospNrDc == true -> {
                 item {
                     SectionHeader("5G NSA (EN-DC)")
                     ConnectedChoice(
                         options = listOf(true, false),
-                        selected = state.nrDc,
+                        selected = state.modem.nrDc,
                         label = { nsaOn -> if (nsaOn) "NSA on" else "NSA off" },
                         onSelect = vm::setNrDc,
                         enabled = !state.busy,
@@ -82,7 +94,7 @@ fun BandsScreen(
             }
         }
 
-        if (state.device?.samsungMenu == true) {
+        if (state.modem.device?.samsungMenu == true) {
             item {
                 SectionHeader("Samsung")
                 Segmented {
@@ -108,9 +120,10 @@ fun BandsScreen(
             )
         }
 
-        items(state.groups, key = { it.group.name }) { bandGroup ->
+        items(state.modem.groups, key = { it.group.name }) { bandGroup ->
             BandGroup(
                 bandGroup,
+                selected = state.selectedBands(bandGroup),
                 favorites = state.favoritesOf(bandGroup.group),
                 busy = state.busy,
                 onToggle = { vm.toggleBand(bandGroup.group, it) },
@@ -124,10 +137,10 @@ fun BandsScreen(
 }
 
 private fun backendHint(state: UiState): String =
-    when (state.backend) {
+    when (state.modem.backend) {
         Backend.QUALCOMM -> {
             val afterReboot =
-                if (state.persist) {
+                if (state.modem.persist) {
                     "Locks stay after a reboot (you can change that in Tools)."
                 } else {
                     "Locks are cleared when you reboot."
@@ -136,7 +149,7 @@ private fun backendHint(state: UiState): String =
         }
 
         Backend.MEDIATEK -> {
-            "Changes are sent with AT+EPBSE and AT+EPBSEH on ${state.atNode.ifEmpty { "the AT port found automatically" }}."
+            "Changes are sent with AT+EPBSE and AT+EPBSEH on ${state.modem.atNode.ifEmpty { "the AT port found automatically" }}."
         }
 
         Backend.PIXEL -> {
@@ -148,21 +161,26 @@ private fun backendHint(state: UiState): String =
         }
     }
 
-private fun selectionSummary(bandGroup: BandGroupState): String =
+private fun selectionSummary(
+    bandGroup: BandGroupState,
+    selected: Set<Int>,
+): String =
     buildString {
-        append("${bandGroup.selected.size} of ${bandGroup.supported.size} selected")
-        if (bandGroup.stray !== null) {
-            append(", locked but the phone is on ${bandGroup.group.bandLabel(bandGroup.stray)}")
+        append("${selected.size} of ${bandGroup.supported.size} selected")
+        val stray = bandGroup.stray
+        if (stray !== null) {
+            append(", locked but the phone is on ${bandGroup.group.bandLabel(stray)}")
         } else if (bandGroup.locked) {
             append(", locked")
         }
-        if (bandGroup.dirty) append(", not applied yet")
+        if (selected != bandGroup.allowed) append(", not applied yet")
     }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun BandGroup(
     bandGroup: BandGroupState,
+    selected: Set<Int>,
     favorites: Set<Int>,
     busy: Boolean,
     onToggle: (Int) -> Unit,
@@ -188,14 +206,14 @@ private fun BandGroup(
                 shapes = shapes,
                 colors = segmentColors(),
                 supportingContent = {
-                    Text(if (pickingFavorites) "Tap the bands you want to keep in view." else selectionSummary(bandGroup))
+                    Text(if (pickingFavorites) "Tap the bands you want to keep in view." else selectionSummary(bandGroup, selected))
                 },
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconToggleButton(checked = pickingFavorites, onCheckedChange = ::pickFavorites) {
                             Icon(Icons.Rounded.Star, contentDescription = "Pick favorite bands")
                         }
-                        LockBadge(bandGroup.locked && bandGroup.stray === null, size = 40.dp)
+                        LockBadge(bandGroup.locked && bandGroup.stray === null, size = 40.dp, ignored = bandGroup.stray !== null)
                     }
                 },
             ) {
@@ -206,7 +224,7 @@ private fun BandGroup(
             Panel(shape = shapes.shape) {
                 ToggleGrid(
                     options = shownBands,
-                    isChecked = { if (pickingFavorites) it in favorites else it in bandGroup.selected },
+                    isChecked = { if (pickingFavorites) it in favorites else it in selected },
                     label = { bandGroup.group.bandLabel(it) },
                     onToggle = if (pickingFavorites) onToggleFavorite else onToggle,
                     columns = 4,
@@ -238,7 +256,7 @@ private fun BandGroup(
                             Text("Unlock")
                         }
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = onLock, enabled = !busy && bandGroup.selected.isNotEmpty(), shapes = ButtonDefaults.shapes()) {
+                        Button(onClick = onLock, enabled = !busy && selected.isNotEmpty(), shapes = ButtonDefaults.shapes()) {
                             Icon(BunnyIcons.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Lock")

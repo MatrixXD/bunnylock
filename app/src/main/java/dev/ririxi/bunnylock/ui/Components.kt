@@ -1,6 +1,7 @@
 package dev.ririxi.bunnylock.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -262,6 +263,8 @@ fun <T> ToggleGrid(
 }
 
 private const val BADGE_FULL_TURN_MILLIS = 14_000
+private const val BADGE_WOBBLE_MILLIS = 1_400
+private const val BADGE_WOBBLE_DEGREES = 10f
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -269,42 +272,66 @@ fun LockBadge(
     locked: Boolean,
     size: Dp = 48.dp,
     spin: Boolean = false,
+    ignored: Boolean = false,
 ) {
     val green = LocalLockGreen.current
-    val containerColor by animateColorAsState(
-        if (locked) green.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHighest,
-        label = "badge",
-    )
-    val angle =
-        if (locked && spin) {
-            val transition = rememberInfiniteTransition(label = "spin")
-            transition
-                .animateFloat(
-                    initialValue = 0f,
-                    targetValue = 360f,
-                    animationSpec = infiniteRepeatable(tween(BADGE_FULL_TURN_MILLIS, easing = LinearEasing), RepeatMode.Restart),
-                    label = "angle",
-                ).value
-        } else {
-            0f
+    val colors = MaterialTheme.colorScheme
+    val style =
+        when {
+            ignored -> LockBadgeStyle(MaterialShapes.SoftBurst, colors.error.copy(alpha = 0.2f), colors.error, BunnyIcons.LockAlert, "Lock ignored")
+            locked -> LockBadgeStyle(MaterialShapes.Cookie9Sided, green.copy(alpha = 0.22f), green, BunnyIcons.Lock, "Locked")
+            else -> LockBadgeStyle(MaterialShapes.Cookie6Sided, colors.surfaceContainerHighest, colors.onSurfaceVariant, BunnyIcons.LockOpen, "Unlocked")
         }
-    val shape = if (locked) MaterialShapes.Cookie9Sided else MaterialShapes.Cookie6Sided
+    val containerColor by animateColorAsState(style.container, label = "badge")
+    val angle =
+        when {
+            !spin -> {
+                0f
+            }
+
+            ignored -> {
+                rememberInfiniteTransition(label = "wobble")
+                    .animateFloat(
+                        initialValue = -BADGE_WOBBLE_DEGREES,
+                        targetValue = BADGE_WOBBLE_DEGREES,
+                        animationSpec = infiniteRepeatable(tween(BADGE_WOBBLE_MILLIS, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                        label = "angle",
+                    ).value
+            }
+
+            locked -> {
+                rememberInfiniteTransition(label = "spin")
+                    .animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(tween(BADGE_FULL_TURN_MILLIS, easing = LinearEasing), RepeatMode.Restart),
+                        label = "angle",
+                    ).value
+            }
+
+            else -> {
+                0f
+            }
+        }
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Box(
             Modifier
                 .size(size)
                 .rotate(angle)
-                .clip(shape.toShape())
+                .clip(style.shape.toShape())
                 .background(containerColor),
         )
-        Icon(
-            if (locked) BunnyIcons.Lock else BunnyIcons.LockOpen,
-            contentDescription = if (locked) "Locked" else "Unlocked",
-            tint = if (locked) green else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(size * 0.45f),
-        )
+        Icon(style.icon, contentDescription = style.description, tint = style.content, modifier = Modifier.size(size * 0.45f))
     }
 }
+
+private class LockBadgeStyle(
+    val shape: RoundedPolygon,
+    val container: Color,
+    val content: Color,
+    val icon: ImageVector,
+    val description: String,
+)
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -372,6 +399,42 @@ object BunnyIcons {
             curveToRelative(0f, -1.71f, 1.39f, -3.1f, 3.1f, -3.1f)
             curveToRelative(1.71f, 0f, 3.1f, 1.39f, 3.1f, 3.1f)
             verticalLineToRelative(2f)
+            close()
+        }
+    }
+
+    val LockAlert: ImageVector by lazy {
+        icon("LockAlert", PathFillType.EvenOdd) {
+            moveTo(18f, 8f)
+            horizontalLineToRelative(-1f)
+            verticalLineTo(6f)
+            curveToRelative(0f, -2.76f, -2.24f, -5f, -5f, -5f)
+            reflectiveCurveTo(7f, 3.24f, 7f, 6f)
+            verticalLineToRelative(2f)
+            horizontalLineTo(6f)
+            curveToRelative(-1.1f, 0f, -2f, 0.9f, -2f, 2f)
+            verticalLineToRelative(10f)
+            curveToRelative(0f, 1.1f, 0.9f, 2f, 2f, 2f)
+            horizontalLineToRelative(12f)
+            curveToRelative(1.1f, 0f, 2f, -0.9f, 2f, -2f)
+            verticalLineTo(10f)
+            curveToRelative(0f, -1.1f, -0.9f, -2f, -2f, -2f)
+            close()
+            moveTo(15.1f, 8f)
+            horizontalLineTo(8.9f)
+            verticalLineTo(6f)
+            curveToRelative(0f, -1.71f, 1.39f, -3.1f, 3.1f, -3.1f)
+            curveToRelative(1.71f, 0f, 3.1f, 1.39f, 3.1f, 3.1f)
+            verticalLineToRelative(2f)
+            close()
+            moveTo(11f, 11.7f)
+            arcToRelative(1f, 1f, 0f, false, true, 2f, 0f)
+            verticalLineToRelative(3.5f)
+            arcToRelative(1f, 1f, 0f, false, true, -2f, 0f)
+            close()
+            moveTo(10.9f, 18.3f)
+            arcToRelative(1.1f, 1.1f, 0f, true, true, 2.2f, 0f)
+            arcToRelative(1.1f, 1.1f, 0f, true, true, -2.2f, 0f)
             close()
         }
     }

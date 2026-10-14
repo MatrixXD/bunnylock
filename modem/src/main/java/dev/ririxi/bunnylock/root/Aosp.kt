@@ -7,6 +7,7 @@ import android.os.Process
 import android.telephony.AccessNetworkConstants.AccessNetworkType
 import android.telephony.RadioAccessSpecifier
 import dev.ririxi.bunnylock.core.toIntList
+import dev.ririxi.bunnylock.modem.andList
 import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.reflect.InvocationTargetException
@@ -20,8 +21,12 @@ import java.util.concurrent.TimeUnit
  * radio HAL implements the call.
  */
 object Aosp {
-    /** TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_USER. */
+    // TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_* values.
     private const val REASON_USER = 0
+    private const val REASON_POWER = 1
+    private const val REASON_CARRIER = 2
+    private const val REASON_ENABLE_2G = 3
+    private val OTHER_REASONS = listOf(REASON_POWER, REASON_CARRIER, REASON_ENABLE_2G)
 
     /** An allowed network types bitmask of NETWORK_TYPE_* values: type n is bit n - 1. */
     private fun bitsOf(vararg networkTypes: Int): Long = networkTypes.fold(0L) { mask, networkType -> mask or (1L shl (networkType - 1)) }
@@ -37,6 +42,7 @@ object Aosp {
             bitsOf(13, 19),
             bitsOf(20),
         )
+    private val GENERATION_NAMES = listOf("2G", "3G", "4G", "5G")
 
     // TelephonyManager.NR_DUAL_CONNECTIVITY_ENABLE and ENABLE_NR_DUAL_CONNECTIVITY_SUCCESS (system APIs, so not in the SDK).
     private const val NR_DC_ENABLE = 1
@@ -179,19 +185,70 @@ object Aosp {
      */
     private fun generations(mask: Long): List<Boolean> = GENERATION_BITS.map { mask and it != 0L }
 
-    /** Every network-mode value the framework will tell, for the error message when a mode is refused. */
-    private fun networkModeDiagnostic(
-        subId: Int,
-        slot: Int,
-    ): String {
+    private fun hasAnyGeneration(mask: Long): Boolean = generations(mask).any { it }
+
+    private fun otherReasonMasks(subId: Int): Map<Int, Long> {
+        val unset = unsetReasonMask()
+        return buildMap {
+            for (reason in OTHER_REASONS) {
+                val mask = readMask("getAllowedNetworkTypesForReason", subId, reason) ?: continue
+                if (mask > 0 && mask != unset) put(reason, mask)
+            }
+        }
+    }
+
+    private fun unsetReasonMask(): Long? =
+        runCatching {
+            val defaultMode = Class.forName("com.android.internal.telephony.RILConstants").getField("PREFERRED_NETWORK_MODE").getInt(null)
+            val raf = Class.forName("android.telephony.RadioAccessFamily").getMethod("getRafFromNetworkType", Int::class.javaPrimitiveType).invoke(null, defaultMode)
+            (raf as Int).toLong()
+        }.getOrNull()
+
+    private fun sentToModem(
+        mask: Long,
+        otherReasons: Map<Int, Long>,
+    ): Long = otherReasons.values.fold(mask) { result, allowed -> result and allowed }
+
+    private fun heldBackCause(
+        mask: Long,
+        otherReasons: Map<Int, Long>,
+    ): String? {
+        val requested = generations(mask)
+        val removedByReason =
+            otherReasons
+                .mapValues { (_, allowed) ->
+                    val kept = generations(allowed)
+                    GENERATION_NAMES.filterIndexed { index, _ -> requested[index] && !kept[index] }
+                }.filterValues { it.isNotEmpty() }
+        if (removedByReason.isEmpty()) return null
+        val causes =
+            removedByReason.map { (reason, removed) ->
+                when (reason) {
+                    REASON_POWER -> "power saving (Battery Saver, for example) is on"
+                    REASON_CARRIER -> "the carrier settings leave out ${andList(removed)}"
+                    else -> "the \"Allow 2G\" setting is off"
+                }
+            }
+        val keptOff = GENERATION_NAMES.filter { name -> removedByReason.values.any { name in it } }
+        return "Android keeps ${andList(keptOff)} off for now: ${andList(causes)}."
+    }
+
+    private fun reasonMasksText(subId: Int): String {
         // The index is the TelephonyManager.ALLOWED_NETWORK_TYPES_REASON_* value.
         val reasons =
             listOf("USER", "POWER", "CARRIER", "2G", "TEST")
                 .mapIndexedNotNull { reason, label ->
                     readMask("getAllowedNetworkTypesForReason", subId, reason)?.let { "$label=${maskText(it)}" }
                 }
-        val effective = readMask("getEffectiveAllowedNetworkTypes", subId)
         val modem = readMask("getAllowedNetworkTypesBitmask", subId)
+        return (reasons + "modem=${maskText(modem)}").joinToString(", ")
+    }
+
+    /** Every network-mode value the framework will tell, for the error message when a mode is refused. */
+    private fun networkModeDiagnostic(
+        subId: Int,
+        slot: Int,
+    ): String {
         val radioAccessFamily = readMask("getRadioAccessFamily", slot, callingPackage)
         val setters =
             buildList {
@@ -199,15 +256,7 @@ object Aosp {
                 if (hasMethod("setAllowedNetworkTypes", 2)) add("allowed")
                 if (hasMethod("setPreferredNetworkType", 2)) add("preferred")
             }
-        return (
-            reasons +
-                listOf(
-                    "effective=${maskText(effective)}",
-                    "modem=${maskText(modem)}",
-                    "RAF=${maskText(radioAccessFamily)}",
-                    "setters=${setters.joinToString("/").ifEmpty { "none" }}",
-                )
-        ).joinToString(", ")
+        return "${reasonMasksText(subId)}, RAF=${maskText(radioAccessFamily)}, setters=${setters.joinToString("/").ifEmpty { "none" }}"
     }
 
     private fun supportedTypes(): Long? {
@@ -220,10 +269,18 @@ object Aosp {
         val json = JSONObject()
         val userAllowed = readMask("getAllowedNetworkTypesForReason", subId, REASON_USER)
         val modemAllowed = readMask("getAllowedNetworkTypesBitmask", subId)
-        (modemAllowed ?: userAllowed)?.let { json.put("allowed", it) }
+        val otherReasons = otherReasonMasks(subId)
+        val heldBack =
+            userAllowed !== null &&
+                modemAllowed !== null &&
+                generations(modemAllowed) != generations(userAllowed) &&
+                generations(modemAllowed) == generations(sentToModem(userAllowed, otherReasons))
+        val shownAllowed = if (heldBack) userAllowed else modemAllowed ?: userAllowed
+        shownAllowed?.let { json.put("allowed", it) }
+        if (heldBack) heldBackCause(userAllowed, otherReasons)?.let { json.put("modeHeldBack", it) }
+        json.put("modeMasks", reasonMasksText(subId))
         userAllowed?.let { json.put("userAllowed", it) }
         modemAllowed?.let { json.put("modemAllowed", it) }
-        readMask("getEffectiveAllowedNetworkTypes", subId)?.let { json.put("effectiveAllowed", it) }
         supportedTypes()?.let { json.put("supportedTypes", it) }
         runCatching { json.put("nrDc", call("isNrDualConnectivityEnabled", subId) as Boolean) }
         runCatching {
@@ -295,12 +352,13 @@ object Aosp {
             listOfNotNull(mask, mask and CDMA_BITS.inv(), supported?.let { mask and it })
                 .filter { it != 0L }
                 .distinct()
+        val otherReasons = otherReasonMasks(subId)
         val failures = ArrayList<String>()
         var notApplied: Long? = null
         for (attempt in attempts) {
             val result = runCatching { setAllowedOnce(subId, attempt) }
             val accepted = result.getOrNull() == true
-            if (accepted && modemSwitchesTo(subId, attempt)) return JSONObject().put("allowed", attempt).put("requested", mask)
+            if (accepted && modemSwitchesTo(subId, attempt, otherReasons)) return applied(subId, attempt, mask, otherReasons)
             val error = result.exceptionOrNull()
             val failure =
                 when {
@@ -316,24 +374,48 @@ object Aosp {
         }
         // Some modems only switch modes while no connection is open.
         notApplied?.let { attempt ->
-            val switched = runCatching { inAirplaneMode { setAllowedOnce(subId, attempt) && modemSwitchesTo(subId, attempt) } }.getOrDefault(false)
-            if (switched) return JSONObject().put("allowed", attempt).put("requested", mask).put("airplaneMode", true)
+            val switched =
+                runCatching {
+                    inAirplaneMode {
+                        // Android skips a value it already holds, so the old one goes back first.
+                        if (previous !== null && previous != attempt) runCatching { setAllowedOnce(subId, previous) }
+                        setAllowedOnce(subId, attempt) && modemSwitchesTo(subId, attempt, otherReasons)
+                    }
+                }.getOrDefault(false)
+            if (switched) return applied(subId, attempt, mask, otherReasons).put("airplaneMode", true)
             failures += "mask 0x%X not taken with the radio off either".format(attempt)
         }
         val restored = previous !== null && runCatching { setAllowedOnce(subId, previous) }.getOrDefault(false)
         val restoredText = if (restored) " The previous network mode was put back." else ""
+        val causeText = heldBackCause(mask, otherReasons)?.let { " $it" }.orEmpty()
         val after = networkModeDiagnostic(subId, slot)
-        throw IllegalStateException("The radio refused this network mode (${failures.joinToString("; ")}).$restoredText Before: $before. After: $after.")
+        throw IllegalStateException(
+            "The radio refused this network mode (${failures.joinToString("; ")}).$restoredText$causeText Before: $before. After: $after.",
+        )
+    }
+
+    private fun applied(
+        subId: Int,
+        attempt: Long,
+        requested: Long,
+        otherReasons: Map<Int, Long>,
+    ): JSONObject {
+        val json = JSONObject().put("allowed", attempt).put("requested", requested)
+        val readback = readMask("getAllowedNetworkTypesBitmask", subId)
+        if (readback !== null && generations(readback) != generations(attempt)) heldBackCause(attempt, otherReasons)?.let { json.put("heldBack", it) }
+        return json
     }
 
     private fun modemSwitchesTo(
         subId: Int,
         mask: Long,
+        otherReasons: Map<Int, Long>,
     ): Boolean {
+        val expected = listOfNotNull(mask, sentToModem(mask, otherReasons).takeIf(::hasAnyGeneration)).map(::generations)
         repeat(MODE_READBACK_CHECKS) { check ->
             if (check > 0) Thread.sleep(MODE_READBACK_RETRY_MS)
             val readback = readMask("getAllowedNetworkTypesBitmask", subId)
-            if (readback === null || generations(readback) == generations(mask)) return true
+            if (readback === null || generations(readback) in expected) return true
         }
         return false
     }

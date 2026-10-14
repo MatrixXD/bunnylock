@@ -38,7 +38,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,6 +55,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.ririxi.bunnylock.data.Release
+import dev.ririxi.bunnylock.modem.Access
+import dev.ririxi.bunnylock.modem.RootState
 
 enum class Tab(
     val label: String,
@@ -75,6 +76,10 @@ fun BunnyApp(vm: MainViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     LaunchedEffect(Unit) { vm.events.collect { snackbar.showSnackbar(it) } }
+    var pulledToRefresh by remember { mutableStateOf(false) }
+    LaunchedEffect(state.modem.refreshing) { if (!state.modem.refreshing) pulledToRefresh = false }
+    // Refreshes the app starts itself, like the one after every change, show in the app bar so the screen doesn't jump.
+    val bunnyRefreshing = state.modem.refreshing && pulledToRefresh
 
     state.update?.let { UpdateDialog(it, onSkip = vm::skipUpdate, onDismiss = vm::dismissUpdate) }
 
@@ -86,11 +91,11 @@ fun BunnyApp(vm: MainViewModel) {
                 actions = {
                     Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                         when {
-                            state.busy || state.root == RootState.Checking -> {
+                            state.busy || (state.modem.refreshing && !pulledToRefresh) || state.modem.root == RootState.Checking -> {
                                 LoadingIndicator(Modifier.size(36.dp))
                             }
 
-                            state.root == RootState.Granted -> {
+                            state.modem.root == RootState.Granted -> {
                                 IconButton(onClick = vm::refresh) {
                                     Icon(Icons.Rounded.Refresh, contentDescription = "Refresh")
                                 }
@@ -107,7 +112,7 @@ fun BunnyApp(vm: MainViewModel) {
             )
         },
         bottomBar = {
-            if (state.root == RootState.Granted) {
+            if (state.modem.root == RootState.Granted) {
                 ShortNavigationBar {
                     Tab.entries.forEach { tab ->
                         ShortNavigationBarItem(
@@ -122,17 +127,17 @@ fun BunnyApp(vm: MainViewModel) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { innerPadding ->
-        when (val root = state.root) {
+        when (val root = state.modem.root) {
             RootState.Checking -> {
                 Centered(innerPadding) {
-                    LoadingIndicator(Modifier.size(96.dp))
-                    Text(state.connectStep, textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMediumEmphasized)
+                    HoppingBunny()
+                    Text(state.modem.connectStep, textAlign = TextAlign.Center, style = MaterialTheme.typography.titleMediumEmphasized)
                 }
             }
 
             is RootState.Denied -> {
                 Centered(innerPadding) {
-                    LockBadge(locked = false, size = 120.dp)
+                    DroopyBunny()
                     Text("Root or Shizuku needed", style = MaterialTheme.typography.headlineMediumEmphasized)
                     Text(
                         root.reason,
@@ -149,21 +154,24 @@ fun BunnyApp(vm: MainViewModel) {
                 val pullToRefreshState = rememberPullToRefreshState()
                 val contentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding())
                 PullToRefreshBox(
-                    isRefreshing = state.refreshing,
-                    onRefresh = vm::refresh,
+                    isRefreshing = bunnyRefreshing,
+                    onRefresh = {
+                        pulledToRefresh = true
+                        vm.refresh()
+                    },
                     state = pullToRefreshState,
                     modifier = Modifier.fillMaxSize().padding(top = innerPadding.calculateTopPadding()),
                     indicator = {
-                        PullToRefreshDefaults.LoadingIndicator(
+                        BunnyRefreshIndicator(
                             state = pullToRefreshState,
-                            isRefreshing = state.refreshing,
+                            isRefreshing = bunnyRefreshing,
                             modifier = Modifier.align(Alignment.TopCenter),
                         )
                     },
                 ) {
                     // Inside the refresh box so the app bar expands before an overscroll becomes a refresh.
                     AnimatedContent(
-                        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+                        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection).belowBunnyRefresh(pullToRefreshState),
                         targetState = selectedTab,
                         transitionSpec = { fadeIn() togetherWith fadeOut() },
                         label = "tab",
@@ -220,10 +228,10 @@ private fun UpdateDialog(
 private fun topBarSubtitle(state: UiState): String {
     val backendAndSim =
         listOfNotNull(
-            state.backend?.label,
-            if (state.sims.size > 1) "SIM ${state.sim}" else null,
+            state.modem.backend?.label,
+            if (state.modem.sims.size > 1) "SIM ${state.modem.sim}" else null,
         )
-    val throughShizuku = state.access == Access.SHIZUKU_ADB || state.access == Access.SHIZUKU_ROOT
+    val throughShizuku = state.modem.access == Access.SHIZUKU_ADB || state.modem.access == Access.SHIZUKU_ROOT
     val accessSuffix = if (throughShizuku) ", through Shizuku" else ""
     return backendAndSim.joinToString(" on ").ifEmpty { "Band and cell locking" } + accessSuffix
 }

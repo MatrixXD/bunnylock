@@ -27,6 +27,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.ririxi.bunnylock.core.Bands
 import dev.ririxi.bunnylock.data.Rat
+import dev.ririxi.bunnylock.modem.Backend
+import dev.ririxi.bunnylock.modem.Group
+import dev.ririxi.bunnylock.modem.LockRat
+import dev.ririxi.bunnylock.modem.formatPlmn
 
 private val NumberKeyboard = KeyboardOptions(keyboardType = KeyboardType.Number)
 
@@ -44,7 +48,7 @@ fun CellScreen(
                 item {
                     LockStatusItem(
                         it,
-                        locked = state.anyPlmnLock,
+                        locked = state.modem.anyPlmnLock,
                         title = plmnLockTitle(state),
                         description = registrationText(state),
                     )
@@ -59,15 +63,16 @@ fun CellScreen(
                 item {
                     LockStatusItem(
                         it,
-                        locked = state.anyCellLock && state.strayChannel === null,
+                        locked = state.modem.anyCellLock && state.modem.strayChannel === null,
+                        ignored = state.modem.strayChannel !== null,
                         title = cellLockTitle(state),
                         description = cellLockDescription(state),
                     )
                 }
-                state.lteLock?.let { lock -> item { InfoItem(it, "LTE", lock) } }
-                state.nrLock?.let { lock -> item { InfoItem(it, "NR", lock) } }
-                state.legacyCellLock?.let { lock -> item { InfoItem(it, "2G/3G", lock) } }
-                if (state.anyCellLock) {
+                state.modem.lteLock?.let { lock -> item { InfoItem(it, "LTE", lock) } }
+                state.modem.nrLock?.let { lock -> item { InfoItem(it, "NR", lock) } }
+                state.modem.legacyCellLock?.let { lock -> item { InfoItem(it, "2G/3G", lock) } }
+                if (state.modem.anyCellLock) {
                     item { shapes ->
                         SegmentedListItem(
                             onClick = vm::unlockCells,
@@ -89,11 +94,12 @@ fun CellScreen(
         }
 
         item {
-            val lockableCells = state.cells.filter { it.rat == Rat.LTE || it.rat == Rat.NR }
+            val lockableCells = state.modem.cells.filter { it.rat == Rat.LTE || it.rat == Rat.NR }
             SectionHeader("Visible cells (tap one to fill in)")
-            Segmented {
-                if (lockableCells.isEmpty()) item { InfoItem(it, "No cells found", "Needs location") }
-                lockableCells.forEach { cell -> item { shapes -> CellItem(shapes, cell) { vm.fillFrom(cell) } } }
+            if (lockableCells.isEmpty()) {
+                Panel { SleepyBunny("No cells found", "Cell scans need location access.") }
+            } else {
+                Segmented { lockableCells.forEach { cell -> item { shapes -> CellItem(shapes, cell) { vm.fillFrom(cell) } } } }
             }
         }
     }
@@ -106,38 +112,39 @@ private fun LockStatusItem(
     locked: Boolean,
     title: String,
     description: String,
+    ignored: Boolean = false,
 ) {
     SegmentedListItem(
         shapes = shapes,
         colors = segmentColors(),
-        leadingContent = { LockBadge(locked, size = 44.dp) },
+        leadingContent = { LockBadge(locked, size = 44.dp, ignored = ignored) },
         supportingContent = { Text(description) },
     ) { Text(title, style = MaterialTheme.typography.titleMediumEmphasized) }
 }
 
 private fun plmnLockTitle(state: UiState): String {
-    val lock = state.plmnLock ?: return "Automatic"
+    val lock = state.modem.plmnLock ?: return "Automatic"
     // The lock is a PLMN such as "262 01", or a ready-made phrase when the locked network isn't known.
     return if (lock.firstOrNull()?.isDigit() == true) "Locked to $lock" else lock
 }
 
 private fun registrationText(state: UiState): String {
-    val plmn = state.registeredPlmn ?: return "Not registered on a network."
-    val name = state.registeredName?.let { " ($it)" }.orEmpty()
+    val plmn = state.modem.registeredPlmn ?: return "Not registered on a network."
+    val name = state.modem.registeredName?.let { " ($it)" }.orEmpty()
     return "Connected to ${formatPlmn(plmn)}$name."
 }
 
 private fun cellLockTitle(state: UiState): String =
     when {
-        state.strayChannel !== null -> "Ignored"
-        state.anyCellLock -> "Locked"
+        state.modem.strayChannel !== null -> "Ignored"
+        state.modem.anyCellLock -> "Locked"
         else -> "Not locked"
     }
 
 private fun cellLockDescription(state: UiState): String =
     when {
-        state.strayChannel !== null -> "Android accepted the lock, but the phone is on ${state.strayChannel}."
-        state.anyCellLock -> "The modem is pinned to a specific cell."
+        state.modem.strayChannel !== null -> "Android accepted the lock, but the phone is on ${state.modem.strayChannel}."
+        state.modem.anyCellLock -> "The modem is pinned to a specific cell."
         else -> "The modem picks cells on its own."
     }
 
@@ -166,9 +173,9 @@ private fun PlmnForm(
             modifier = Modifier.weight(1f),
         )
     }
-    if (state.plmnPicks.isNotEmpty()) {
+    if (state.modem.plmnPicks.isNotEmpty()) {
         ToggleGrid(
-            options = state.plmnPicks,
+            options = state.modem.plmnPicks,
             isChecked = { (plmn, _) -> plmn == state.plmnMcc + state.plmnMnc },
             label = { (plmn, name) -> "${formatPlmn(plmn)} $name" },
             onToggle = { (plmn, _) -> vm.pickPlmn(plmn) },
@@ -176,7 +183,7 @@ private fun PlmnForm(
         )
     }
     Text(
-        if (state.backend == Backend.QUALCOMM) {
+        if (state.modem.backend == Backend.QUALCOMM) {
             "Set over QMI first. If the modem refuses, Android network selection is used instead."
         } else {
             "Uses Android's manual network selection, which stays after a reboot."
@@ -187,7 +194,7 @@ private fun PlmnForm(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(
             onClick = vm::unlockPlmn,
-            enabled = !state.busy && state.anyPlmnLock,
+            enabled = !state.busy && state.modem.anyPlmnLock,
             shapes = ButtonDefaults.shapes(),
             modifier = Modifier.weight(1f),
         ) { Text("Automatic") }
@@ -206,9 +213,9 @@ private fun PlmnForm(
 
 private fun cellLockHint(state: UiState): String =
     when {
-        state.backend == Backend.QUALCOMM -> "Locks LTE and NR to a PCI (the SA PCell or the NSA SCG). Leave the NR PCI empty to lock only the frequency, and separate several PCIs with commas."
-        state.mtkAtCellLock -> "Uses AT+EMMCHLCK, which holds one lock at a time. The PCI is optional, and the radio restarts to apply the lock."
-        state.backend == Backend.MEDIATEK -> "This modem doesn't take AT+EMMCHLCK, so the frequency (ARFCN) is locked through the radio HAL instead. That can't lock to a PCI, and some modems ignore it."
+        state.modem.backend == Backend.QUALCOMM -> "Locks LTE and NR to a PCI (the SA PCell or the NSA SCG). Leave the NR PCI empty to lock only the frequency, and separate several PCIs with commas."
+        state.modem.mtkAtCellLock -> "Uses AT+EMMCHLCK, which holds one lock at a time. The PCI is optional, and the radio restarts to apply the lock."
+        state.modem.backend == Backend.MEDIATEK -> "This modem doesn't take AT+EMMCHLCK, so the frequency (ARFCN) is locked through the radio HAL instead. That can't lock to a PCI, and some modems ignore it."
         else -> "Locks the frequency (ARFCN) through the radio HAL. This backend can't lock to a PCI, and some modems (stock Qualcomm, for example) only apply the band and ignore the channel."
     }
 
@@ -292,7 +299,7 @@ private fun LteLockFields(
             label = { Text("PCIs") },
             singleLine = true,
             modifier = Modifier.weight(1f),
-            enabled = state.supportsPciLock,
+            enabled = state.modem.supportsPciLock,
         )
     }
 }
@@ -321,7 +328,7 @@ private fun NrLockFields(
             label = { Text("PCIs") },
             singleLine = true,
             modifier = Modifier.weight(1f),
-            enabled = state.supportsPciLock,
+            enabled = state.modem.supportsPciLock,
         )
     }
     if (form.nrCandidates.size > 1) {
@@ -335,7 +342,7 @@ private fun NrLockFields(
             detail = { Group.NR.frequencyName(it) },
         )
     }
-    if (state.backend == Backend.QUALCOMM) {
+    if (state.modem.backend == Backend.QUALCOMM) {
         Text("Subcarrier spacing (kHz)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         ConnectedChoice(
             options = listOf(15, 30, 60, 120),
