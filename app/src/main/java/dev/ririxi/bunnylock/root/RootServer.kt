@@ -103,7 +103,7 @@ object RootServer {
 
             "aosp.setNrDc" -> Aosp.setNrDc(subId, request.getInt("state"))
 
-            "aosp.setChannels" -> Aosp.setChannels(subId, request.optJSONArray("specs") ?: JSONArray())
+            "aosp.setChannels" -> Aosp.setChannels(subId, request.optJSONArray("specs") ?: JSONArray(), request.optBoolean("split", true))
 
             "aosp.setPlmn" -> Aosp.setPlmn(subId, request.getString("plmn"), persist)
 

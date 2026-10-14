@@ -208,7 +208,7 @@ private fun cellLockHint(state: UiState): String =
     when {
         state.backend == Backend.QUALCOMM -> "Locks LTE and NR to a PCI (the SA PCell or the NSA SCG). Leave the NR PCI empty to lock only the frequency, and separate several PCIs with commas."
         state.mtkAtCellLock -> "Uses AT+EMMCHLCK, which holds one lock at a time. The PCI is optional, and the radio restarts to apply the lock."
-        state.backend == Backend.MEDIATEK -> "This modem refuses AT+EMMCHLCK, so the frequency (ARFCN) is locked through the radio HAL instead. That can't lock to a PCI, and some modems ignore it."
+        state.backend == Backend.MEDIATEK -> "This modem doesn't take AT+EMMCHLCK, so the frequency (ARFCN) is locked through the radio HAL instead. That can't lock to a PCI, and some modems ignore it."
         else -> "Locks the frequency (ARFCN) through the radio HAL. This backend can't lock to a PCI, and some modems (stock Qualcomm, for example) only apply the band and ignore the channel."
     }
 

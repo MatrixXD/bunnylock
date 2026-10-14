@@ -287,6 +287,7 @@ object Aosp {
         slot: Int,
     ): JSONObject {
         val before = networkModeDiagnostic(subId, slot)
+        val previous = readMask("getAllowedNetworkTypesForReason", subId, REASON_USER) ?: readMask("getAllowedNetworkTypesBitmask", subId)
         val supported = readMask("getRadioAccessFamily", slot, callingPackage)?.takeIf { it > 0 }
         val attempts =
             listOfNotNull(mask, mask and CDMA_BITS.inv(), supported?.let { mask and it })
@@ -309,8 +310,10 @@ object Aosp {
                 }
             failures += "mask 0x%X %s".format(attempt, failure)
         }
+        val restored = previous !== null && runCatching { setAllowedOnce(subId, previous) }.getOrDefault(false)
+        val restoredText = if (restored) " The previous network mode was put back." else ""
         val after = networkModeDiagnostic(subId, slot)
-        throw IllegalStateException("The radio refused this network mode (${failures.joinToString("; ")}). Before: $before. After: $after.")
+        throw IllegalStateException("The radio refused this network mode (${failures.joinToString("; ")}).$restoredText Before: $before. After: $after.")
     }
 
     /** [state] is a TelephonyManager.NR_DUAL_CONNECTIVITY_* value: 1 = enable EN-DC, 2 = disable, 3 = disable immediately. */
@@ -337,6 +340,7 @@ object Aosp {
     fun setChannels(
         subId: Int,
         specs: JSONArray,
+        splitRefused: Boolean = true,
     ): JSONObject {
         check(subId >= 0) {
             "Android has no active subscription for this SIM, so there is nothing to send the lock to. " +
@@ -344,7 +348,7 @@ object Aosp {
         }
         val whole = List(specs.length()) { specs.getJSONObject(it) }.map(::toSpecifier)
         // Samsung's Snapdragon RIL refuses a specifier with more than MAX_RIL_BANDS bands, so a refused long list is sent again in pieces.
-        val split = whole.flatMap(::splitToRilBands)
+        val split = if (splitRefused) whole.flatMap(::splitToRilBands) else whole
         val requestDiagnostic = channelRequestDiagnostic(subId, specs)
         val outcomes = ArrayList<String>()
         var lastAnswer: Boolean? = null

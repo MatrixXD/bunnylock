@@ -41,6 +41,8 @@ object Mediatek {
     private const val EPBSEH_LTE_WORD_COUNT = 3
     private const val HEX_DIGITS_PER_WORD = 8
 
+    private const val CELL_LOCK_READBACK_RETRY_MS = 1000L
+
     /** Bit of each GSM band, by its MHz name, in the GSM word. */
     private val GSM_BITS = mapOf(900 to 1, 1800 to 3, 1900 to 4, 850 to 7)
 
@@ -237,6 +239,9 @@ object Mediatek {
         val channelLock = "AT+EMMCHLCK=1,$act,0,$arfcn"
         val command = if (pci === null) channelLock else "$channelLock,$pci,$mode"
         At.ok(node, command)
+        val lock = cellLockState(node)
+        if (lock.optBoolean("active")) return lock
+        Thread.sleep(CELL_LOCK_READBACK_RETRY_MS)
         return cellLockState(node)
     }
 
